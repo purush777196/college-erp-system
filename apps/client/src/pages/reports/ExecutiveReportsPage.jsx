@@ -182,24 +182,28 @@ export const ExecutiveReportsPage = () => {
           <Award className="w-4 h-4 mr-2" />
           Published Results
         </button>
-        <button
-          onClick={() => setActiveTab('finance')}
-          className={`pb-3 text-sm font-semibold border-b-2 whitespace-nowrap transition-all flex items-center ${
-            activeTab === 'finance' ? 'border-teal-600 text-teal-700' : 'border-transparent text-navy-500 hover:text-navy-900'
-          }`}
-        >
-          <CreditCard className="w-4 h-4 mr-2" />
-          Financial Ledgers & Dues
-        </button>
-        <button
-          onClick={() => setActiveTab('activity')}
-          className={`pb-3 text-sm font-semibold border-b-2 whitespace-nowrap transition-all flex items-center ${
-            activeTab === 'activity' ? 'border-teal-600 text-teal-700' : 'border-transparent text-navy-500 hover:text-navy-900'
-          }`}
-        >
-          <ShieldCheck className="w-4 h-4 mr-2" />
-          System Activity
-        </button>
+        {['super_admin', 'principal', 'accounts', 'admin'].includes((user?.role || '').toLowerCase()) && (
+          <button
+            onClick={() => setActiveTab('finance')}
+            className={`pb-3 text-sm font-semibold border-b-2 whitespace-nowrap transition-all flex items-center ${
+              activeTab === 'finance' ? 'border-teal-600 text-teal-700' : 'border-transparent text-navy-500 hover:text-navy-900'
+            }`}
+          >
+            <CreditCard className="w-4 h-4 mr-2" />
+            Financial Ledgers & Dues
+          </button>
+        )}
+        {['super_admin', 'principal', 'admin'].includes((user?.role || '').toLowerCase()) && (
+          <button
+            onClick={() => setActiveTab('activity')}
+            className={`pb-3 text-sm font-semibold border-b-2 whitespace-nowrap transition-all flex items-center ${
+              activeTab === 'activity' ? 'border-teal-600 text-teal-700' : 'border-transparent text-navy-500 hover:text-navy-900'
+            }`}
+          >
+            <ShieldCheck className="w-4 h-4 mr-2" />
+            System Activity
+          </button>
+        )}
       </div>
 
       {/* TAB 1: Enrollment Analytics */}

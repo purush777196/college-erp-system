@@ -1,4 +1,7 @@
 const Subject = require('./subject.model');
+const Department = require('../departments/department.model');
+const mongoose = require('mongoose');
+const { ROLES } = require('@college-erp/shared');
 const { sendSuccess, sendError } = require('../../utils/response');
 const { HTTP_STATUS } = require('@college-erp/shared');
 const { recordAuditLog } = require('../../utils/auditLogger');
@@ -10,7 +13,23 @@ async function listSubjects(req, res, next) {
     if (req.query.semester) query.semester = parseInt(req.query.semester, 10);
     if (req.query.department) query.department = req.query.department;
 
-    const subjects = await Subject.find(query).populate('course', 'name code').populate('department', 'name code');
+    if (req.user && req.user.role === ROLES.HOD) {
+      const dept = await Department.findOne({
+        $or: [
+          { hod: req.user._id },
+          ...(req.user.department
+            ? [
+                ...(mongoose.Types.ObjectId.isValid(req.user.department) ? [{ _id: req.user.department }] : []),
+                { name: req.user.department },
+                { code: String(req.user.department).toUpperCase() }
+              ]
+            : [])
+        ]
+      });
+      if (dept) query.department = dept._id;
+    }
+
+    const subjects = await Subject.find(query).populate('course', 'name code degreeType').populate('department', 'name code');
     return sendSuccess(res, {
       message: 'Subjects retrieved successfully',
       data: subjects,

@@ -59,8 +59,19 @@ async function getTimetable(req, res, next) {
     } else if (req.user && req.user.role === ROLES.FACULTY && !query.faculty) {
       const facultyProfile = await Faculty.findOne({ user: req.user._id });
       if (facultyProfile) query.faculty = facultyProfile._id;
-    } else if (req.user && req.user.role === ROLES.HOD && !query.department) {
-      const dept = await Department.findOne({ hod: req.user._id });
+    } else if (req.user && req.user.role === ROLES.HOD) {
+      const dept = await Department.findOne({
+        $or: [
+          { hod: req.user._id },
+          ...(req.user.department
+            ? [
+                ...(mongoose.Types.ObjectId.isValid(req.user.department) ? [{ _id: req.user.department }] : []),
+                { name: req.user.department },
+                { code: String(req.user.department).toUpperCase() }
+              ]
+            : [])
+        ]
+      });
       if (dept) query.department = dept._id;
     }
 

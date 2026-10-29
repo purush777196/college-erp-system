@@ -29,6 +29,21 @@ async function getResults(req, res, next) {
       const publishedExams = await Examination.find({ isPublished: true }).select('_id');
       const publishedExamIds = publishedExams.map((e) => e._id);
       query.examination = { $in: publishedExamIds };
+    } else if (req.user && req.user.role === ROLES.HOD && !req.query.student) {
+      let hodDept = null;
+      if (req.user.department) {
+        hodDept = await Department.findOne({
+          $or: [{ name: req.user.department }, { hod: req.user._id }]
+        });
+      } else {
+        hodDept = await Department.findOne({ hod: req.user._id });
+      }
+
+      if (hodDept) {
+        const deptStudents = await Student.find({ department: hodDept._id }).select('_id');
+        const deptStudentIds = deptStudents.map((s) => s._id);
+        query.student = { $in: deptStudentIds };
+      }
     }
 
     const results = await Result.find(query)

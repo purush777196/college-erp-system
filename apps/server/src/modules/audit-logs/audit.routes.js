@@ -8,10 +8,10 @@ const router = express.Router();
 
 router.use(authenticate);
 
-// Audit logs are exclusively for Super Admin and Principal
+// Audit log querying permitted for administrative roles (Super Admin, Principal, HOD)
 router.get(
   '/',
-  authorizeRoles(ROLES.SUPER_ADMIN, ROLES.PRINCIPAL),
+  authorizeRoles(ROLES.SUPER_ADMIN, ROLES.PRINCIPAL, ROLES.HOD),
   listAuditLogs
 );
 
@@ -23,7 +23,7 @@ router.get(
 
 router.get(
   '/:id',
-  authorizeRoles(ROLES.SUPER_ADMIN, ROLES.PRINCIPAL),
+  authorizeRoles(ROLES.SUPER_ADMIN, ROLES.PRINCIPAL, ROLES.HOD),
   getAuditLogById
 );
 

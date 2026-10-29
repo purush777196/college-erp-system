@@ -1,5 +1,6 @@
 const Attendance = require('./attendance.model');
 const Student = require('../students/student.model');
+const Department = require('../departments/department.model');
 const { sendSuccess, sendError } = require('../../utils/response');
 const { HTTP_STATUS, ROLES } = require('@college-erp/shared');
 
@@ -21,6 +22,21 @@ async function getAttendanceRecords(req, res, next) {
         });
       }
       query.student = studentProfile._id;
+    } else if (req.user && req.user.role === ROLES.HOD && !req.query.student) {
+      let hodDept = null;
+      if (req.user.department) {
+        hodDept = await Department.findOne({
+          $or: [{ name: req.user.department }, { hod: req.user._id }]
+        });
+      } else {
+        hodDept = await Department.findOne({ hod: req.user._id });
+      }
+
+      if (hodDept) {
+        const deptStudents = await Student.find({ department: hodDept._id }).select('_id');
+        const deptStudentIds = deptStudents.map((s) => s._id);
+        query.student = { $in: deptStudentIds };
+      }
     }
 
     const records = await Attendance.find(query)

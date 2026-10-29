@@ -8,7 +8,7 @@ const { recordAuditLog } = require('../../utils/auditLogger');
 async function listStudents(req, res, next) {
   try {
     const page = Math.max(1, parseInt(req.query.page, 10) || 1);
-    const limit = Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 20));
+    const limit = Math.min(1000, Math.max(1, parseInt(req.query.limit, 10) || 20));
     const skip = (page - 1) * limit;
 
     const query = {};
@@ -37,6 +37,21 @@ async function listStudents(req, res, next) {
           });
         }
       }
+    } else if (req.user?.role === ROLES.HOD) {
+      // Enforce HOD department-level scoping to ensure cross-department data isolation
+      const dept = await Department.findOne({
+        $or: [
+          { hod: req.user._id },
+          ...(req.user.department
+            ? [
+                ...(mongoose.Types.ObjectId.isValid(req.user.department) ? [{ _id: req.user.department }] : []),
+                { name: req.user.department },
+                { code: String(req.user.department).toUpperCase() }
+              ]
+            : [])
+        ]
+      });
+      if (dept) query.department = dept._id;
     }
     if (req.query.semester) query.currentSemester = parseInt(req.query.semester, 10);
     if (req.query.batch) query.batchYear = req.query.batch;

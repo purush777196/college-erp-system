@@ -1,6 +1,8 @@
 const AuditLog = require('./audit.model');
+const Department = require('../departments/department.model');
+const User = require('../auth/auth.model');
 const { sendSuccess, sendError } = require('../../utils/response');
-const { HTTP_STATUS } = require('@college-erp/shared');
+const { HTTP_STATUS, ROLES } = require('@college-erp/shared');
 
 /**
  * GET /api/v1/audit-logs
@@ -36,6 +38,42 @@ async function listAuditLogs(req, res, next) {
     if (req.query.q && typeof req.query.q === 'string' && req.query.q.trim()) {
       const regex = new RegExp(req.query.q.trim(), 'i');
       query.$or = [{ action: regex }, { entityType: regex }, { ipAddress: regex }];
+    }
+
+    // Role-based department scoping for HOD: strictly isolate to department scope
+    if (req.user && req.user.role === ROLES.HOD) {
+      let hodDept = null;
+      if (req.user.department) {
+        hodDept = await Department.findOne({
+          $or: [{ name: req.user.department }, { hod: req.user._id }]
+        });
+      } else {
+        hodDept = await Department.findOne({ hod: req.user._id });
+      }
+
+      if (hodDept) {
+        const deptUsers = await User.find({
+          $or: [{ department: hodDept.name }, { _id: req.user._id }]
+        }).select('_id');
+        const deptUserIds = deptUsers.map((u) => u._id);
+
+        const deptConditions = [
+          { user: { $in: deptUserIds } },
+          { 'details.department': hodDept.name },
+          { 'details.departmentId': hodDept._id.toString() },
+          { 'details.departmentCode': hodDept.code },
+          { entityType: { $in: ['Subject', 'Timetable', 'Attendance', 'Examination', 'Result', 'Notice'] } }
+        ];
+
+        if (query.$or) {
+          query.$and = [{ $or: query.$or }, { $or: deptConditions }];
+          delete query.$or;
+        } else {
+          query.$or = deptConditions;
+        }
+      } else {
+        query.user = req.user._id;
+      }
     }
 
     const [logs, total] = await Promise.all([

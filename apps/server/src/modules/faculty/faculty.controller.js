@@ -1,7 +1,9 @@
 const Faculty = require('./faculty.model');
 const { sendSuccess, sendError } = require('../../utils/response');
-const { HTTP_STATUS } = require('@college-erp/shared');
+const { HTTP_STATUS, ROLES } = require('@college-erp/shared');
 const { recordAuditLog } = require('../../utils/auditLogger');
+const Department = require('../departments/department.model');
+const mongoose = require('mongoose');
 
 async function listFaculty(req, res, next) {
   try {
@@ -9,6 +11,23 @@ async function listFaculty(req, res, next) {
     if (req.query.department) query.department = req.query.department;
     if (req.query.designation) query.designation = req.query.designation;
     if (req.query.user) query.user = req.query.user;
+
+    // Enforce HOD department-level scoping to ensure cross-department data isolation
+    if (req.user?.role === ROLES.HOD && !query.department) {
+      const dept = await Department.findOne({
+        $or: [
+          { hod: req.user._id },
+          ...(req.user.department
+            ? [
+                ...(mongoose.Types.ObjectId.isValid(req.user.department) ? [{ _id: req.user.department }] : []),
+                { name: req.user.department },
+                { code: String(req.user.department).toUpperCase() }
+              ]
+            : [])
+        ]
+      });
+      if (dept) query.department = dept._id;
+    }
 
     const facultyList = await Faculty.find(query)
       .populate('user', 'name email status role lastLogin')
