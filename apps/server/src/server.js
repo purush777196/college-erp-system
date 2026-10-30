@@ -1,13 +1,14 @@
-
 const dns = require("node:dns");
 
 // Work around the current Windows DNS SRV resolution issue.
 dns.setServers(["8.8.8.8", "1.1.1.1"]);
 
+
 const app = require("./app");
 const env = require("./config/env");
 const { connectDB, closeDB } = require("./config/db");
 const logger = require("./utils/logger");
+const { startReminderScheduler, stopReminderScheduler } = require("./modules/notifications/reminder.scheduler");
 
 let server;
 let shuttingDown = false;
@@ -27,6 +28,10 @@ async function startServer() {
       logger.info(` Health API:  http://localhost:${env.PORT}/api/health`);
       logger.info("===================================================");
     });
+
+    if (env.NODE_ENV !== "test") {
+      startReminderScheduler();
+    }
 
     server.on("error", (error) => {
       logger.error("HTTP server error:", error);
@@ -59,6 +64,8 @@ async function shutdown(signal, exitCode = 0) {
   logger.info(`${signal} received: closing HTTP server and database...`);
 
   try {
+    stopReminderScheduler();
+
     if (server) {
       await new Promise((resolve) => server.close(resolve));
     }

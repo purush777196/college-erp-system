@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import {
   CalendarCheck,
@@ -22,7 +22,24 @@ import {
   ArrowRight,
   ExternalLink,
   FileText,
-  FileSpreadsheet
+  FileSpreadsheet,
+  Check,
+  X,
+  ChevronLeft,
+  ChevronRight,
+  AlertCircle,
+  Calendar,
+  Bell,
+  Percent,
+  Download,
+  Filter,
+  Plus,
+  Trash2,
+  Eye,
+  BarChart2,
+  FolderKanban,
+  CalendarDays,
+  User
 } from 'lucide-react';
 import Card from '../../components/common/Card';
 import CampusBuildingGraphic from '../../components/common/CampusBuildingGraphic';
@@ -40,6 +57,77 @@ import api from '../../api/apiClient';
 import { useAuth } from '../../context/AuthContext';
 import { useToast } from '../../context/ToastContext';
 import { ROLES, USER_STATUS, DEPARTMENTS } from '@college-erp/shared';
+import { exportToCsv } from '../../utils/csvExport';
+
+import AssignmentsSection from './components/AssignmentsSection';
+import AssignedCoursesSection from './components/AssignedCoursesSection';
+import SyllabusMaterialsSection from './components/SyllabusMaterialsSection';
+import AttendanceAnalyticsSection from './components/AttendanceAnalyticsSection';
+import StudentPerformanceAnalyticsSection from './components/StudentPerformanceAnalyticsSection';
+import SmartSyllabusTrackerSection from './components/SmartSyllabusTrackerSection';
+import LearningResourceLibrarySection from './components/LearningResourceLibrarySection';
+import StudentAppointmentSection from './components/StudentAppointmentSection';
+import AcademicCalendarSection from './components/AcademicCalendarSection';
+import FacultyProfileModal from './components/FacultyProfileModal';
+import FacultyNotificationsCenter from './components/FacultyNotificationsCenter';
+import SubjectDetailsModal from './components/SubjectDetailsModal';
+import FacultyKpiCard from './components/FacultyKpiCard';
+import TeachingScheduleSection from './components/TeachingScheduleSection';
+import PendingTasksSection from './components/PendingTasksSection';
+import AssignedSubjectsModal from './components/AssignedSubjectsModal';
+import WeeklyScheduleModal from './components/WeeklyScheduleModal';
+import StudentsUnderMySubjectsModal from './components/StudentsUnderMySubjectsModal';
+import PendingTasksModal from './components/PendingTasksModal';
+
+function formatRelativeTime(dateString) {
+  if (!dateString) return 'Recently';
+  const date = new Date(dateString);
+  const now = new Date();
+  const diffInSec = Math.floor((now - date) / 1000);
+  if (diffInSec < 60) return 'Just now';
+  const diffInMin = Math.floor(diffInSec / 60);
+  if (diffInMin < 60) return `${diffInMin}m ago`;
+  const diffInHours = Math.floor(diffInMin / 60);
+  if (diffInHours < 24) return `${diffInHours}h ago`;
+  const diffInDays = Math.floor(diffInHours / 24);
+  if (diffInDays < 30) return `${diffInDays}d ago`;
+  return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+}
+
+function getActivityDisplay(act) {
+  const action = act.action || '';
+  if (action === 'ATTENDANCE_MARKED') {
+    const period = act.details?.periodNumber ? `Period ${act.details.periodNumber}` : 'session';
+    const count = act.details?.count ? `(${act.details.count} students)` : '';
+    return {
+      title: `Attendance marked for ${period} ${count}`.trim(),
+      icon: CalendarCheck,
+      color: 'text-purple-600 bg-purple-50'
+    };
+  }
+  if (action === 'MARKS_RECORDED') {
+    const count = act.details?.count ? `(${act.details.count} students)` : '';
+    return {
+      title: `Evaluation marks submitted ${count}`.trim(),
+      icon: Award,
+      color: 'text-emerald-600 bg-emerald-50'
+    };
+  }
+  if (action.includes('LOGIN')) {
+    return {
+      title: 'Portal login session',
+      icon: Key,
+      color: 'text-blue-600 bg-blue-50'
+    };
+  }
+  return {
+    title: act.entityType ? `${act.action} on ${act.entityType}` : (act.action || 'Faculty activity'),
+    icon: FileText,
+    color: 'text-slate-600 bg-slate-50'
+  };
+}
+
+const VALID_FACULTY_TABS = ['timetable', 'courses', 'roster', 'exams', 'pending', 'assignments', 'analytics', 'syllabus', 'resources', 'appointments', 'calendar'];
 
 export const FacultyDashboard = () => {
   const { user } = useAuth();
@@ -54,17 +142,58 @@ export const FacultyDashboard = () => {
   const [students, setStudents] = useState([]);
   const [exams, setExams] = useState([]);
   const [attendanceRecords, setAttendanceRecords] = useState([]);
+  const [activities, setActivities] = useState([]);
+  const [notices, setNotices] = useState([]);
+  const [results, setResults] = useState([]);
+  const [assignments, setAssignments] = useState([]);
+  const [materials, setMaterials] = useState([]);
+  const [dbAssignedSubjects, setDbAssignedSubjects] = useState([]);
+  const [selectedDetailSubject, setSelectedDetailSubject] = useState(null);
+  const [isSubjectDetailsOpen, setIsSubjectDetailsOpen] = useState(false);
+  const [subjectSearch, setSubjectSearch] = useState('');
+  const [subjectSemesterFilter, setSubjectSemesterFilter] = useState('all');
+  const [subjectYearFilter, setSubjectYearFilter] = useState('2025-26');
+  const [isProfileModalOpen, setIsProfileModalOpen] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
+
+  // Detail Modal States for the 4 KPI Cards (Popups directly on same dashboard)
+  const [isAssignedSubjectsModalOpen, setIsAssignedSubjectsModalOpen] = useState(false);
+  const [isWeeklyScheduleModalOpen, setIsWeeklyScheduleModalOpen] = useState(false);
+  const [isStudentsModalOpen, setIsStudentsModalOpen] = useState(false);
+  const [isPendingTasksModalOpen, setIsPendingTasksModalOpen] = useState(false);
+
   const [searchParams, setSearchParams] = useSearchParams();
   const queryTab = searchParams.get('tab');
-  const [facultyActiveTab, setFacultyActiveTab] = useState(queryTab || 'timetable');
+  const facultyActiveTab = VALID_FACULTY_TABS.includes(queryTab) ? queryTab : 'timetable';
+  const [subjectDetailsInitialTab, setSubjectDetailsInitialTab] = useState('overview');
+  const tabsContainerRef = useRef(null);
 
+  // Auto-scroll into view when navigated via query param (e.g. /faculty?tab=courses)
   useEffect(() => {
-    if (queryTab) {
-      setFacultyActiveTab(queryTab);
+    if (queryTab && tabsContainerRef.current) {
+      const scrollTab = () => {
+        if (!tabsContainerRef.current) return;
+        const yOffset = -24;
+        const y = tabsContainerRef.current.getBoundingClientRect().top + window.pageYOffset + yOffset;
+        window.scrollTo({ top: Math.max(0, y), behavior: 'smooth' });
+      };
+      scrollTab();
+      const timer = setTimeout(scrollTab, 150);
+      return () => clearTimeout(timer);
     }
   }, [queryTab]);
+
+  const handleTabChange = useCallback((newTab) => {
+    if (VALID_FACULTY_TABS.includes(newTab)) {
+      setSearchParams((prev) => {
+        const next = new URLSearchParams(prev);
+        next.set('tab', newTab);
+        return next;
+      });
+    }
+  }, [setSearchParams]);
+
   const [isMarkAttendanceOpen, setIsMarkAttendanceOpen] = useState(false);
-  const [isLoading, setIsLoading] = useState(true);
 
   // Filters
   const [selectedDeptFilter, setSelectedDeptFilter] = useState('');
@@ -116,29 +245,33 @@ export const FacultyDashboard = () => {
     setIsLoading(true);
     try {
       if (isFacultyRole) {
-        const [myProfRes, subjRes, timeRes, studRes, examRes, attRes] = await Promise.all([
+        const [myProfRes, subjRes, timeRes, studRes, examRes, attRes, actRes, notRes, resRes, assignRes, matRes, myAssignedRes] = await Promise.all([
           api.getMyFacultyProfile().catch(() => ({ data: null })),
           api.getSubjects().catch(() => ({ data: [] })),
           api.getTimetable().catch(() => ({ data: [] })),
-          api.getStudents({ limit: 100 }).catch(() => ({ data: [] })),
+          api.getStudents({ limit: 500 }).catch(() => ({ data: [] })),
           api.getExams().catch(() => ({ data: [] })),
-          api.getAttendance().catch(() => ({ data: [] }))
+          api.getAttendance().catch(() => ({ data: [] })),
+          api.getMyFacultyActivities().catch(() => ({ data: [] })),
+          api.getNotices().catch(() => ({ data: [] })),
+          api.getResults().catch(() => ({ data: [] })),
+          api.getAssignments().catch(() => ({ data: [] })),
+          api.getMaterials().catch(() => ({ data: [] })),
+          api.getMyAssignedSubjects().catch(() => ({ data: [] }))
         ]);
 
         if (myProfRes?.data) setMyProfile(myProfRes.data);
         if (subjRes?.data) setSubjects(subjRes.data);
         if (timeRes?.data) setTimetableSlots(timeRes.data);
-        if (studRes?.data) {
-          setStudents(studRes.data);
-          if (studRes.data.length > 0) {
-            setAttendanceForm((prev) => ({ ...prev, studentId: studRes.data[0]._id || studRes.data[0].id }));
-          }
-        }
+        if (studRes?.data) setStudents(studRes.data);
         if (examRes?.data) setExams(Array.isArray(examRes.data) ? examRes.data : (examRes.data?.exams || []));
         if (attRes?.data) setAttendanceRecords(attRes.data);
-        if (subjRes?.data?.length > 0) {
-          setAttendanceForm((prev) => ({ ...prev, subject: subjRes.data[0]._id || subjRes.data[0].id }));
-        }
+        if (actRes?.data) setActivities(Array.isArray(actRes.data) ? actRes.data : []);
+        if (notRes?.data) setNotices(Array.isArray(notRes.data) ? notRes.data : []);
+        if (resRes?.data) setResults(Array.isArray(resRes.data) ? resRes.data : []);
+        if (assignRes?.data) setAssignments(Array.isArray(assignRes.data) ? assignRes.data : []);
+        if (matRes?.data) setMaterials(Array.isArray(matRes.data) ? matRes.data : []);
+        if (myAssignedRes?.data) setDbAssignedSubjects(Array.isArray(myAssignedRes.data) ? myAssignedRes.data : []);
       } else {
         const [facRes, subjRes, timeRes, deptRes, usersRes] = await Promise.all([
           api.getFaculty({
@@ -171,6 +304,70 @@ export const FacultyDashboard = () => {
   useEffect(() => {
     loadData();
   }, [loadData]);
+
+  // Assignment Handlers
+  const handleCreateAssignment = async (formData) => {
+    const res = await api.createAssignment(formData);
+    addToast({
+      type: 'success',
+      title: 'Assignment Created',
+      message: `Assignment "${formData.title}" created successfully.`
+    });
+    const updated = await api.getAssignments();
+    if (updated?.data) setAssignments(Array.isArray(updated.data) ? updated.data : []);
+    return res;
+  };
+
+  const handleUpdateAssignment = async (id, formData) => {
+    const res = await api.updateAssignment(id, formData);
+    addToast({
+      type: 'success',
+      title: 'Assignment Updated',
+      message: `Assignment "${formData.title}" updated successfully.`
+    });
+    const updated = await api.getAssignments();
+    if (updated?.data) setAssignments(Array.isArray(updated.data) ? updated.data : []);
+    return res;
+  };
+
+  const handleDeleteAssignment = async (id) => {
+    await api.deleteAssignment(id);
+    addToast({
+      type: 'success',
+      title: 'Assignment Removed',
+      message: 'Assignment removed successfully.'
+    });
+    const updated = await api.getAssignments();
+    if (updated?.data) setAssignments(Array.isArray(updated.data) ? updated.data : []);
+  };
+
+  const handlePublishAssignment = async (id) => {
+    await api.publishAssignment(id);
+    addToast({
+      type: 'success',
+      title: 'Assignment Published',
+      message: 'Assignment is now published and active for students.'
+    });
+    const updated = await api.getAssignments();
+    if (updated?.data) setAssignments(Array.isArray(updated.data) ? updated.data : []);
+  };
+
+  const handleEvaluateSubmission = async (assignmentId, submissionId, data) => {
+    const res = await api.evaluateAssignmentSubmission(assignmentId, submissionId, data);
+    addToast({
+      type: 'success',
+      title: 'Submission Evaluated',
+      message: `Grade (${data.marksObtained} marks) and feedback saved.`
+    });
+    const updated = await api.getAssignments();
+    if (updated?.data) setAssignments(Array.isArray(updated.data) ? updated.data : []);
+    return res;
+  };
+
+  const handleRefreshMaterials = async () => {
+    const res = await api.getMaterials();
+    if (res?.data) setMaterials(Array.isArray(res.data) ? res.data : []);
+  };
 
   // Open Edit Profile
   const handleOpenEdit = (fac) => {
@@ -472,45 +669,535 @@ export const FacultyDashboard = () => {
   // ==========================================
   // VIEW 1: AUTHENTICATED FACULTY SELF-SERVICE WORKPLACE
   // ==========================================
-  // Faculty timetable & attendance data matching reference image
-  const facultyTodayTimetable = [
-    { time: '09:00 AM - 10:00 AM', subject: 'Molecular Biology', cohort: 'IV B.Tech', room: 'Room 301' },
-    { time: '10:00 AM - 11:00 AM', subject: 'Bioprocess Engineering', cohort: 'IV B.Tech', room: 'Room 302' },
-    { time: '02:00 PM - 03:00 PM', subject: 'Lab Session', cohort: 'Biotech Lab', room: 'Lab B' },
-    { time: '03:00 PM - 04:00 PM', subject: 'Project Guidance', cohort: 'IV B.Tech', room: 'Seminar Hall' }
-  ];
+  // States for interactive faculty features
+  const [attendanceSubjectId, setAttendanceSubjectId] = useState('');
+  const [attendanceDate, setAttendanceDate] = useState(new Date().toISOString().split('T')[0]);
+  const [attendancePeriod, setAttendancePeriod] = useState('1');
+  const [attendanceRemarks, setAttendanceRemarks] = useState('');
+  const [studentRoster, setStudentRoster] = useState([]);
 
-  const facultyAttendanceDonut = [
-    { label: 'Present', value: 92, color: '#10b981' },
-    { label: 'Absent', value: 6, color: '#ef4444' },
-    { label: 'Late', value: 2, color: '#f59e0b' }
-  ];
+  // Roster tab filters & pagination
+  const [rosterSubjectFilter, setRosterSubjectFilter] = useState('all');
+  const [rosterSemesterFilter, setRosterSemesterFilter] = useState('all');
+  const [rosterSectionFilter, setRosterSectionFilter] = useState('all');
+  const [rosterSearch, setRosterSearch] = useState('');
+  const [rosterPage, setRosterPage] = useState(1);
+  const ROSTER_PAGE_SIZE = 10;
 
-  const facultySubjectsList = [
-    { code: 'BT301', name: 'Molecular Biology', students: 14 },
-    { code: 'BT302', name: 'Bioprocess Engineering', students: 16 },
-    { code: 'BT401', name: 'Biotech Laboratory', students: 12 }
-  ];
-
-  const facultyRecentActivities = [
-    { title: 'Attendance marked - BT301', time: '2 hours ago', icon: CalendarCheck, color: 'text-purple-600 bg-purple-50' },
-    { title: 'Lab records updated', time: '1 day ago', icon: FileSpreadsheet, color: 'text-blue-600 bg-blue-50' },
-    { title: 'Internal marks submitted', time: '2 days ago', icon: Award, color: 'text-emerald-600 bg-emerald-50' },
-    { title: 'Student meeting conducted', time: '3 days ago', icon: Users, color: 'text-amber-600 bg-amber-50' }
-  ];
+  // Exams tab state & marks modal
+  const [selectedExamId, setSelectedExamId] = useState('');
+  const [selectedExamSubjectId, setSelectedExamSubjectId] = useState('');
+  const [isMarksModalOpen, setIsMarksModalOpen] = useState(false);
+  const [marksRoster, setMarksRoster] = useState([]);
+  const [marksFormError, setMarksFormError] = useState('');
 
   if (isFacultyRole) {
     const facultyUser = myProfile || facultyList.find((f) => f.user?._id === user?._id || f.user?.id === user?._id);
     const myDeptName = facultyUser?.department?.name || user?.department || 'Engineering';
-    const mySlots = timetableSlots.filter(
-      (t) =>
-        t.faculty?._id === user?._id ||
-        t.faculty?.id === user?._id ||
-        t.faculty?.email === user?.email ||
-        t.faculty?._id === facultyUser?._id
+    const myFacultyDocId = facultyUser?._id || facultyUser?.id;
+    const myUserId = user?._id || user?.id;
+
+    // Resolve timetable slots assigned to authenticated faculty
+    const mySlots = timetableSlots.filter((slot) => {
+      if (!slot) return false;
+      const fac = slot.faculty;
+      if (!fac) return false;
+      if (myFacultyDocId && (fac === myFacultyDocId || fac._id === myFacultyDocId || fac.id === myFacultyDocId)) return true;
+      if (myUserId && (fac.user === myUserId || fac.user?._id === myUserId || fac.user?.id === myUserId)) return true;
+      if (typeof fac === 'string' && (fac === myFacultyDocId || fac === myUserId)) return true;
+      if (facultyUser?.employeeId && fac.employeeId === facultyUser.employeeId) return true;
+      if (user?.email && (fac.user?.email === user.email || fac.email === user.email)) return true;
+      return false;
+    });
+
+    // Derive unique curriculum subjects allocated to faculty (Authoritative DB Source + Robust Multi-Room Fallback)
+    let assignedSubjects = [];
+    if (dbAssignedSubjects && dbAssignedSubjects.length > 0) {
+      assignedSubjects = dbAssignedSubjects;
+    } else {
+      const assignedSubjectsMap = new Map();
+      mySlots.forEach((slot) => {
+        const sub = slot.subject;
+        if (!sub) return;
+        const subId = sub._id || sub.id || (typeof sub === 'string' ? sub : null);
+        if (!subId) return;
+        const key = String(subId);
+        if (!assignedSubjectsMap.has(key)) {
+          const fullSub = typeof sub === 'object' && sub.name
+            ? sub
+            : subjects.find((s) => String(s._id || s.id) === key) || { _id: subId, name: 'Allocated Subject', code: 'SUB' };
+          assignedSubjectsMap.set(key, {
+            ...fullSub,
+            semester: slot.semester || fullSub.semester,
+            course: slot.course || fullSub.course,
+            sections: new Set([slot.section || 'A']),
+            rooms: new Set(slot.roomNumber ? [slot.roomNumber] : []),
+            department: slot.department || fullSub.department,
+            weeklyLecturesCount: 1,
+            slots: [slot]
+          });
+        } else {
+          const entry = assignedSubjectsMap.get(key);
+          if (slot.section) entry.sections.add(slot.section);
+          if (slot.roomNumber) entry.rooms.add(slot.roomNumber);
+          entry.weeklyLecturesCount += 1;
+          entry.slots.push(slot);
+        }
+      });
+      assignedSubjects = Array.from(assignedSubjectsMap.values()).map((entry) => ({
+        ...entry,
+        sections: Array.from(entry.sections),
+        section: Array.from(entry.sections).join(', '),
+        rooms: Array.from(entry.rooms),
+        roomNumber: Array.from(entry.rooms).join(', ') || 'LH-101',
+        academicYear: '2025-26',
+        syllabusCompletion: 0
+      }));
+    }
+
+    // Filtered assigned subjects for My Subjects section (Search & Semester Filter)
+    const filteredMySubjects = assignedSubjects.filter((sub) => {
+      if (subjectSemesterFilter !== 'all' && Number(sub.semester) !== Number(subjectSemesterFilter)) {
+        return false;
+      }
+      if (subjectSearch.trim()) {
+        const q = subjectSearch.toLowerCase().trim();
+        const code = (sub.code || '').toLowerCase();
+        const name = (sub.name || '').toLowerCase();
+        const room = (sub.roomNumber || '').toLowerCase();
+        const sec = (sub.section || '').toLowerCase();
+        if (!code.includes(q) && !name.includes(q) && !room.includes(q) && !sec.includes(q)) {
+          return false;
+        }
+      }
+      return true;
+    });
+
+    // Helper: Enrolled students for a given subject
+    const getStudentsForSubject = (subjectId) => {
+      const sub = assignedSubjects.find((s) => String(s._id || s.id) === String(subjectId));
+      if (!sub) return [];
+      const subSem = Number(sub.semester);
+      const subDeptId = sub.department?._id || sub.department?.id || (typeof sub.department === 'string' ? sub.department : null);
+
+      return students.filter((st) => {
+        const stSem = Number(st.currentSemester);
+        if (subSem && stSem !== subSem) return false;
+        if (subDeptId) {
+          const stDeptId = st.department?._id || st.department?.id || (typeof st.department === 'string' ? st.department : null);
+          if (stDeptId && String(stDeptId) !== String(subDeptId)) return false;
+        }
+        return true;
+      });
+    };
+
+    // All unique students enrolled across assigned subjects (de-duplicated, exactly 0 if no assigned subjects)
+    const assignedStudentsMap = new Map();
+    if (assignedSubjects.length > 0) {
+      assignedSubjects.forEach((sub) => {
+        const list = getStudentsForSubject(sub._id || sub.id);
+        list.forEach((st) => {
+          assignedStudentsMap.set(String(st._id || st.id), st);
+        });
+      });
+    }
+    const assignedStudents = Array.from(assignedStudentsMap.values());
+
+    // Today's schedule slots
+    const todayName = new Date().toLocaleDateString('en-US', { weekday: 'long' });
+    const todaySlots = mySlots
+      .filter((slot) => slot.dayOfWeek && slot.dayOfWeek.toLowerCase() === todayName.toLowerCase())
+      .sort((a, b) => (a.periodNumber || 0) - (b.periodNumber || 0));
+
+    // Attendance stats from real records
+    const assignedSubIdSet = new Set(assignedSubjects.map((s) => String(s._id || s.id)));
+    const relevantAttendance = assignedSubIdSet.size > 0
+      ? attendanceRecords.filter((r) => {
+          const sId = r.subject?._id || r.subject?.id || r.subject;
+          return assignedSubIdSet.has(String(sId));
+        })
+      : attendanceRecords;
+
+    let presentCount = 0;
+    let absentCount = 0;
+    let lateCount = 0;
+    relevantAttendance.forEach((r) => {
+      const st = r.status?.toLowerCase();
+      if (st === 'present') presentCount++;
+      else if (st === 'absent') absentCount++;
+      else if (st === 'late') lateCount++;
+    });
+    const totalAttRecords = presentCount + absentCount + lateCount;
+    const attPercentage = totalAttRecords > 0 ? Math.round(((presentCount + lateCount * 0.5) / totalAttRecords) * 100) : 0;
+    const attendanceDonutData = totalAttRecords > 0 ? [
+      { label: 'Present', value: presentCount, color: '#10b981' },
+      { label: 'Absent', value: absentCount, color: '#ef4444' },
+      { label: 'Late', value: lateCount, color: '#f59e0b' }
+    ] : [];
+
+    // Comprehensive Actionable Pending Tasks Construction
+    const pendingTasks = [];
+    const todayStr = new Date().toISOString().split('T')[0];
+
+    // 1. Pending Attendance Tasks
+    todaySlots.forEach((slot) => {
+      const subId = slot.subject?._id || slot.subject?.id || slot.subject;
+      const isMarked = attendanceRecords.some((r) => {
+        const rSubId = r.subject?._id || r.subject?.id || r.subject;
+        const rDateStr = r.date ? new Date(r.date).toISOString().split('T')[0] : '';
+        return String(rSubId) === String(subId) && rDateStr === todayStr && Number(r.periodNumber) === Number(slot.periodNumber);
+      });
+      if (!isMarked) {
+        pendingTasks.push({
+          id: `att-${slot._id || slot.id || slot.periodNumber}`,
+          category: 'attendance',
+          title: `Mark Attendance for Period ${slot.periodNumber}`,
+          subject: slot.subject?.name || slot.subject?.code || 'Scheduled Lecture',
+          subjectId: subId,
+          section: slot.section || 'A',
+          roomNumber: slot.roomNumber || 'LH-101',
+          periodNumber: slot.periodNumber,
+          date: todayStr,
+          time: `${slot.startTime} - ${slot.endTime}`,
+          priority: 'High',
+          status: 'Unmarked Session',
+          actionLabel: 'Mark Attendance',
+          onAction: () => {
+            setAttendanceSubjectId(subId);
+            setAttendancePeriod(String(slot.periodNumber || 1));
+            handleOpenAttendanceModal(subId, slot.periodNumber);
+          }
+        });
+      }
+    });
+
+    // 2. Pending Examination Marks Tasks
+    exams.forEach((ex) => {
+      assignedSubjects.forEach((sub) => {
+        const subId = sub._id || sub.id;
+        const recorded = results.filter((r) => {
+          const rExamId = r.examination?._id || r.examination?.id || r.examination;
+          const rSubId = r.subject?._id || r.subject?.id || r.subject;
+          return String(rExamId) === String(ex._id || ex.id) && String(rSubId) === String(subId);
+        });
+        const totalRequired = sub.enrolledCount !== undefined ? sub.enrolledCount : 2;
+        if (recorded.length < totalRequired) {
+          pendingTasks.push({
+            id: `exam-${ex._id || ex.id}-${subId}`,
+            category: 'examination',
+            title: `Enter Marks: ${ex.name} — ${sub.code}`,
+            subject: `${sub.code} - ${sub.name}`,
+            subjectId: subId,
+            examId: ex._id || ex.id,
+            examName: ex.name,
+            section: sub.section || 'A',
+            date: ex.startDate ? new Date(ex.startDate).toLocaleDateString() : 'Active Exam',
+            priority: 'Medium',
+            status: 'Pending Evaluation',
+            pendingStudentsCount: Math.max(0, totalRequired - recorded.length),
+            actionLabel: 'Enter Marks',
+            onAction: () => {
+              setSelectedExamId(ex._id || ex.id);
+              setSelectedExamSubjectId(subId);
+              handleOpenMarksModal(ex._id || ex.id, subId);
+            }
+          });
+        }
+      });
+    });
+
+    // 3. Pending Assignment Evaluations Tasks
+    assignments.forEach((asgn) => {
+      const subId = asgn.subject?._id || asgn.subject?.id || asgn.subject;
+      const isMySubject = assignedSubjects.some((s) => String(s._id || s.id) === String(subId));
+      if (isMySubject) {
+        const subs = asgn.submissions || [];
+        const pendingSubmissions = subs.filter(
+          (s) => s.status === 'submitted' && (s.marksObtained === undefined || s.marksObtained === null)
+        );
+        if (pendingSubmissions.length > 0) {
+          pendingTasks.push({
+            id: `asgn-${asgn._id || asgn.id}`,
+            category: 'assignment',
+            title: `Evaluate Submissions: ${asgn.title}`,
+            subject: asgn.subject?.name || asgn.subject?.code || 'Course Assignment',
+            subjectId: subId,
+            assignmentId: asgn._id || asgn.id,
+            date: asgn.dueDate ? new Date(asgn.dueDate).toLocaleDateString() : 'Due Soon',
+            priority: 'Normal',
+            status: `${pendingSubmissions.length} Pending Submission${pendingSubmissions.length === 1 ? '' : 's'}`,
+            actionLabel: 'Evaluate Submissions',
+            onAction: () => handleTabChange('assignments')
+          });
+        }
+      }
+    });
+
+    const pendingCount = pendingTasks.length;
+
+    // Attendance Modal helpers
+    const handleOpenAttendanceModal = (overrideSubId, overridePeriod) => {
+      const subId = overrideSubId || attendanceSubjectId || (assignedSubjects[0] ? (assignedSubjects[0]._id || assignedSubjects[0].id) : '');
+      setAttendanceSubjectId(subId);
+      if (overridePeriod) setAttendancePeriod(String(overridePeriod));
+      const studs = getStudentsForSubject(subId);
+      setStudentRoster(studs.map((s) => ({
+        studentId: s._id || s.id,
+        rollNumber: s.rollNumber,
+        name: s.user?.name || 'Student',
+        email: s.user?.email || '',
+        status: 'present',
+        remarks: ''
+      })));
+      setFormError('');
+      setIsMarkAttendanceOpen(true);
+    };
+
+    const handleModalSubjectChange = (subId) => {
+      setAttendanceSubjectId(subId);
+      const studs = getStudentsForSubject(subId);
+      setStudentRoster(studs.map((s) => ({
+        studentId: s._id || s.id,
+        rollNumber: s.rollNumber,
+        name: s.user?.name || 'Student',
+        email: s.user?.email || '',
+        status: 'present',
+        remarks: ''
+      })));
+    };
+
+    const handleMarkAllPresent = () => {
+      setStudentRoster((prev) => prev.map((s) => ({ ...s, status: 'present' })));
+    };
+
+    const handleStudentStatusToggle = (studentId, status) => {
+      setStudentRoster((prev) => prev.map((s) => s.studentId === studentId ? { ...s, status } : s));
+    };
+
+    const handleStudentRemarkChange = (studentId, remarks) => {
+      setStudentRoster((prev) => prev.map((s) => s.studentId === studentId ? { ...s, remarks } : s));
+    };
+
+    const handleFullAttendanceSubmit = async (e) => {
+      e.preventDefault();
+      setFormError('');
+      if (!attendanceSubjectId) {
+        setFormError('Please select a curriculum subject.');
+        return;
+      }
+      if (!studentRoster || studentRoster.length === 0) {
+        setFormError('No students enrolled in this subject to mark attendance.');
+        return;
+      }
+      setIsSubmitting(true);
+      try {
+        await api.markAttendanceBatch({
+          subject: attendanceSubjectId,
+          date: attendanceDate,
+          periodNumber: Number(attendancePeriod),
+          records: studentRoster.map((s) => ({
+            studentId: s.studentId,
+            status: s.status,
+            remarks: s.remarks || attendanceRemarks || ''
+          }))
+        });
+        addToast({
+          type: 'success',
+          title: 'Class Attendance Recorded',
+          message: `Recorded session attendance for ${studentRoster.length} students.`
+        });
+        setIsMarkAttendanceOpen(false);
+        await loadData();
+      } catch (err) {
+        setFormError(err.message || 'Failed to submit classroom attendance session.');
+      } finally {
+        setIsSubmitting(false);
+      }
+    };
+
+    // Roster Tab Filtering & Pagination
+    const filteredRosterStudents = assignedStudents.filter((st) => {
+      if (rosterSemesterFilter !== 'all' && Number(st.currentSemester) !== Number(rosterSemesterFilter)) {
+        return false;
+      }
+      if (rosterSectionFilter !== 'all') {
+        const sec = st.section || 'A';
+        if (sec.toLowerCase() !== rosterSectionFilter.toLowerCase()) return false;
+      }
+      if (rosterSubjectFilter !== 'all') {
+        const subjectStudents = getStudentsForSubject(rosterSubjectFilter);
+        const isEnrolled = subjectStudents.some((s) => (s._id || s.id) === (st._id || st.id));
+        if (!isEnrolled) return false;
+      }
+      if (rosterSearch.trim()) {
+        const q = rosterSearch.toLowerCase();
+        const matchRoll = st.rollNumber?.toLowerCase().includes(q);
+        const matchName = st.user?.name?.toLowerCase().includes(q);
+        const matchEmail = st.user?.email?.toLowerCase().includes(q);
+        if (!matchRoll && !matchName && !matchEmail) return false;
+      }
+      return true;
+    });
+
+    const totalRosterPages = Math.max(1, Math.ceil(filteredRosterStudents.length / ROSTER_PAGE_SIZE));
+    const paginatedRosterStudents = filteredRosterStudents.slice(
+      (rosterPage - 1) * ROSTER_PAGE_SIZE,
+      rosterPage * ROSTER_PAGE_SIZE
     );
-    const mySubjects = subjects.filter((s) => s.department?.name === myDeptName || !s.department);
-    const myStudents = students.filter((s) => s.department?.name === myDeptName || !s.department);
+
+    const handleExportRosterCSV = () => {
+      const exportData = filteredRosterStudents.map((st) => {
+        const stRecords = relevantAttendance.filter((r) => {
+          const rStId = r.student?._id || r.student?.id || r.student;
+          return String(rStId) === String(st._id || st.id);
+        });
+        const present = stRecords.filter((r) => r.status === 'present').length;
+        const attPct = stRecords.length > 0 ? `${Math.round((present / stRecords.length) * 100)}%` : 'No Records';
+
+        return {
+          rollNumber: st.rollNumber,
+          name: st.user?.name || 'Student',
+          email: st.user?.email || '',
+          department: st.department?.name || myDeptName,
+          semester: `Semester ${st.currentSemester}`,
+          batchYear: st.batchYear || '',
+          attendanceRate: attPct,
+          status: st.admissionStatus || 'Enrolled'
+        };
+      });
+
+      exportToCsv('classroom_student_roster', exportData, [
+        { header: 'Roll Number', key: 'rollNumber' },
+        { header: 'Student Name', key: 'name' },
+        { header: 'Email', key: 'email' },
+        { header: 'Department', key: 'department' },
+        { header: 'Semester', key: 'semester' },
+        { header: 'Batch Year', key: 'batchYear' },
+        { header: 'Attendance %', key: 'attendanceRate' },
+        { header: 'Admission Status', key: 'status' }
+      ]);
+    };
+
+    // Exams Tab & Marks Entry
+    const effectiveExamId = selectedExamId || (exams[0] ? (exams[0]._id || exams[0].id) : '');
+    const effectiveExamSubjectId = selectedExamSubjectId || (assignedSubjects[0] ? (assignedSubjects[0]._id || assignedSubjects[0].id) : '');
+
+    const filteredExamResults = results.filter((res) => {
+      const resExamId = res.examination?._id || res.examination?.id || res.examination;
+      const resSubId = res.subject?._id || res.subject?.id || res.subject;
+      if (effectiveExamId && String(resExamId) !== String(effectiveExamId)) return false;
+      if (effectiveExamSubjectId && String(resSubId) !== String(effectiveExamSubjectId)) return false;
+      return true;
+    });
+
+    const handleOpenMarksModal = (overrideExamId, overrideSubjectId) => {
+      const examId = overrideExamId || effectiveExamId;
+      const subId = overrideSubjectId || effectiveExamSubjectId;
+      if (overrideExamId) setSelectedExamId(overrideExamId);
+      if (overrideSubjectId) setSelectedExamSubjectId(overrideSubjectId);
+
+      if (!examId || !subId) {
+        addToast({
+          type: 'warning',
+          title: 'Select Exam & Subject',
+          message: 'Please select both an examination and an assigned subject first.'
+        });
+        return;
+      }
+      const studs = getStudentsForSubject(subId);
+      const roster = studs.map((st) => {
+        const stId = st._id || st.id;
+        const existing = results.find((r) => {
+          const rStId = r.student?._id || r.student?.id || r.student;
+          const rSubId = r.subject?._id || r.subject?.id || r.subject;
+          const rExId = r.examination?._id || r.examination?.id || r.examination;
+          return String(rStId) === String(stId) && String(rSubId) === String(subId) && String(rExId) === String(examId);
+        });
+
+        return {
+          studentId: stId,
+          rollNumber: st.rollNumber,
+          name: st.user?.name || 'Student',
+          internalMarks: existing?.internalMarks !== undefined ? existing.internalMarks : '',
+          externalMarks: existing?.externalMarks !== undefined ? existing.externalMarks : ''
+        };
+      });
+      setMarksRoster(roster);
+      setMarksFormError('');
+      setIsMarksModalOpen(true);
+    };
+
+    const handleMarksChange = (studentId, field, val) => {
+      setMarksRoster((prev) => prev.map((s) => s.studentId === studentId ? { ...s, [field]: val } : s));
+    };
+
+    const handleBatchMarksSubmit = async (e) => {
+      e.preventDefault();
+      setMarksFormError('');
+
+      for (const row of marksRoster) {
+        const internal = Number(row.internalMarks);
+        const external = Number(row.externalMarks);
+        if (row.internalMarks === '' || isNaN(internal) || internal < 0 || internal > 40) {
+          setMarksFormError(`Internal marks for ${row.rollNumber} must be between 0 and 40.`);
+          return;
+        }
+        if (row.externalMarks === '' || isNaN(external) || external < 0 || external > 60) {
+          setMarksFormError(`External marks for ${row.rollNumber} must be between 0 and 60.`);
+          return;
+        }
+      }
+
+      setIsSubmitting(true);
+      try {
+        await api.batchRecordResults({
+          examination: effectiveExamId,
+          subject: effectiveExamSubjectId,
+          records: marksRoster.map((row) => ({
+            studentId: row.studentId,
+            internalMarks: Number(row.internalMarks),
+            externalMarks: Number(row.externalMarks)
+          }))
+        });
+        addToast({
+          type: 'success',
+          title: 'Marks Saved Successfully',
+          message: `Evaluation marks persisted and server grades computed for ${marksRoster.length} students.`
+        });
+        setIsMarksModalOpen(false);
+        await loadData();
+      } catch (err) {
+        setMarksFormError(err.message || 'Failed to submit examination marks.');
+      } finally {
+        setIsSubmitting(false);
+      }
+    };
+
+    const handleExportMarksCSV = () => {
+      const exportData = filteredExamResults.map((r) => ({
+        rollNumber: r.student?.rollNumber || '',
+        name: r.student?.user?.name || 'Student',
+        examination: r.examination?.name || '',
+        subject: r.subject?.name || '',
+        internalMarks: r.internalMarks ?? 0,
+        externalMarks: r.externalMarks ?? 0,
+        totalMarks: r.totalMarks ?? 0,
+        grade: r.grade || 'F',
+        status: r.status || 'Pending'
+      }));
+
+      exportToCsv('examination_results_marks', exportData, [
+        { header: 'Roll Number', key: 'rollNumber' },
+        { header: 'Student Name', key: 'name' },
+        { header: 'Examination', key: 'examination' },
+        { header: 'Subject', key: 'subject' },
+        { header: 'Internal (40)', key: 'internalMarks' },
+        { header: 'External (60)', key: 'externalMarks' },
+        { header: 'Total (100)', key: 'totalMarks' },
+        { header: 'Grade', key: 'grade' },
+        { header: 'Status', key: 'status' }
+      ]);
+    };
 
     return (
       <div className="space-y-6">
@@ -518,24 +1205,34 @@ export const FacultyDashboard = () => {
         <div className="bg-gradient-to-r from-purple-600 via-purple-700 to-indigo-800 rounded-2xl p-6 sm:p-7 text-white shadow-card relative overflow-hidden flex flex-col md:flex-row md:items-center justify-between gap-6">
           <div className="relative z-10 max-w-xl">
             <div className="inline-flex items-center space-x-1.5 px-3 py-1 rounded-full bg-black/20 text-purple-200 text-xs font-medium mb-3 backdrop-blur-sm border border-white/10">
-              <span>{myDeptName || 'Biotechnology Department'}</span>
-              <span>&darr;</span>
+              <span>{myDeptName}</span>
+              <span>&bull;</span>
+              <span>{facultyUser?.designation || 'Faculty Member'}</span>
             </div>
             <p className="text-xs sm:text-sm font-medium text-purple-100 tracking-wide">
-              Welcome, {user?.name || 'Prof. Neelima'}
+              Welcome back, {user?.name || 'Faculty Member'}
             </p>
             <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-white mt-1">
               Faculty Dashboard
             </h1>
             <p className="mt-1.5 text-xs sm:text-sm text-purple-100/90 font-normal">
-              Teaching schedule, student management and academic activities
+              Teaching schedule, student management, and academic evaluations
             </p>
           </div>
           <div className="flex items-center gap-3 relative z-10">
             <Button
               variant="secondary"
               size="sm"
-              onClick={() => setIsMarkAttendanceOpen(true)}
+              onClick={() => setIsProfileModalOpen(true)}
+              icon={User}
+              className="bg-white/10 hover:bg-white/20 text-white border border-white/20"
+            >
+              Profile & Workload
+            </Button>
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={handleOpenAttendanceModal}
               icon={CalendarCheck}
               className="bg-white/10 hover:bg-white/20 text-white border border-white/20"
             >
@@ -547,109 +1244,284 @@ export const FacultyDashboard = () => {
               onClick={loadData}
               icon={RefreshCw}
               isLoading={isLoading}
+              title="Refresh Dashboard Data"
               className="bg-white/10 hover:bg-white/20 text-white border border-white/20"
             />
             <CampusBuildingGraphic className="w-48 h-24 sm:w-56 sm:h-28 opacity-90 text-white pointer-events-none drop-shadow-md hidden md:block" />
           </div>
         </div>
 
-        {/* Real KPI Cards */}
+        {/* Real KPI Cards - Direct Popup Modals on Same Dashboard (No URL or Tab Navigation) */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-          <StatWidget
+          <FacultyKpiCard
             title="Assigned Subjects"
-            value={mySubjects.length || 3}
-            subtitle="Assigned Subjects"
+            value={assignedSubjects.length}
+            subtitle={`${assignedSubjects.length} Active Allocations`}
             icon={BookOpen}
-            color="purple"
+            onClick={() => setIsAssignedSubjectsModalOpen(true)}
+            ariaLabel={`Assigned Subjects: ${assignedSubjects.length} active allocations. Click to open Assigned Subjects details modal.`}
           />
-          <StatWidget
+          <FacultyKpiCard
             title="Classes This Week"
-            value={mySlots.length || 4}
-            subtitle="Classes This Week"
+            value={mySlots.length}
+            subtitle={`${todaySlots.length} Scheduled Today`}
             icon={Clock}
-            color="purple"
+            onClick={() => setIsWeeklyScheduleModalOpen(true)}
+            ariaLabel={`Classes This Week: ${mySlots.length} weekly lecture periods. Click to open Weekly Teaching Schedule modal.`}
           />
-          <StatWidget
+          <FacultyKpiCard
             title="Total Students"
-            value={myStudents.length || 48}
-            subtitle="Total Students"
+            value={assignedStudents.length}
+            subtitle="Enrolled Across Classes"
             icon={Users}
-            color="purple"
+            onClick={() => setIsStudentsModalOpen(true)}
+            ariaLabel={`Total Students: ${assignedStudents.length} unique enrolled students. Click to open Students Under My Subjects modal.`}
           />
-          <StatWidget
+          <FacultyKpiCard
             title="Pending Tasks"
-            value="2"
-            subtitle="Pending Tasks"
+            value={pendingCount}
+            subtitle={pendingCount === 0 ? "You're all caught up!" : `${pendingCount} Tasks Awaiting Action`}
             icon={AlertTriangle}
-            color="purple"
+            onClick={() => setIsPendingTasksModalOpen(true)}
+            ariaLabel={`Pending Tasks: ${pendingCount} actionable tasks awaiting your completion. Click to open Pending Academic Tasks modal.`}
           />
         </div>
 
         {/* Row 2: Today's Timetable & Student Attendance (This Month) */}
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-          <div className="lg:col-span-6 bg-white rounded-2xl p-5 border border-slate-200/80 shadow-subtle">
-            <div className="flex items-center justify-between mb-4">
-              <h2 className="text-sm sm:text-base font-bold text-slate-900">Today's Timetable</h2>
-              <button
-                onClick={() => setFacultyActiveTab('timetable')}
-                className="text-xs font-semibold text-purple-600 hover:text-purple-700"
-              >
-                View Full
-              </button>
-            </div>
-            <div className="space-y-3">
-              {facultyTodayTimetable.map((slot, i) => (
-                <div key={i} className="flex items-center justify-between p-2.5 rounded-xl hover:bg-slate-50 transition-colors">
-                  <div className="flex items-center space-x-3">
-                    <span className="text-xs font-mono font-bold text-slate-700 w-36">{slot.time}</span>
-                    <span className="text-xs sm:text-sm font-semibold text-slate-900">{slot.subject}</span>
-                  </div>
-                  <span className="text-xs font-medium text-slate-500">{slot.cohort}</span>
+          <div className="lg:col-span-6 bg-white rounded-2xl p-5 border border-slate-200/80 shadow-subtle flex flex-col justify-between">
+            <div>
+              <div className="flex items-center justify-between mb-4">
+                <div className="flex items-center space-x-2">
+                  <h2 className="text-sm sm:text-base font-bold text-slate-900">Today's Timetable</h2>
+                  <Badge variant="purple" size="xs">{todayName}</Badge>
                 </div>
-              ))}
+                <button
+                  onClick={() => handleTabChange('timetable')}
+                  className="text-xs font-semibold text-purple-600 hover:text-purple-700 cursor-pointer"
+                >
+                  View Full Schedule &rarr;
+                </button>
+              </div>
+
+              {todaySlots.length === 0 ? (
+                <div className="py-10 text-center text-slate-500">
+                  <Clock className="w-8 h-8 text-slate-300 mx-auto mb-2" />
+                  <p className="text-xs font-medium text-slate-600">No lecture periods scheduled for {todayName}.</p>
+                  <p className="text-[11px] text-slate-400 mt-1">Enjoy your schedule or review weekly slots.</p>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {todaySlots.map((slot) => (
+                    <div key={slot._id || slot.id} className="flex items-center justify-between p-3 rounded-xl hover:bg-slate-50 transition-colors border border-slate-100">
+                      <div className="flex items-center space-x-3">
+                        <span className="text-xs font-mono font-bold text-slate-700 w-32">
+                          {slot.startTime} - {slot.endTime}
+                        </span>
+                        <div>
+                          <span className="text-xs sm:text-sm font-semibold text-slate-900 block">
+                            {slot.subject?.name || slot.subject?.code || 'Lecture Period'}
+                          </span>
+                          <span className="text-[11px] text-slate-400">
+                            Period {slot.periodNumber} &bull; Semester {slot.semester}
+                          </span>
+                        </div>
+                      </div>
+                      <div className="text-right">
+                        <Badge variant="teal" size="xs">Room {slot.roomNumber || 'LH-101'}</Badge>
+                        <span className="text-[10px] text-slate-500 block mt-1">Sec {slot.section || 'A'}</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
 
-          <div className="lg:col-span-6 bg-white rounded-2xl p-5 border border-slate-200/80 shadow-subtle">
-            <h2 className="text-sm sm:text-base font-bold text-slate-900 mb-4">Student Attendance (This Month)</h2>
-            <div className="flex items-center justify-center py-2">
-              <SimpleDonutChart
-                data={facultyAttendanceDonut}
-                centerLabel="Attendance"
-                centerValue="92%"
-                size={180}
-                thickness={22}
-              />
+          <div className="lg:col-span-6 bg-white rounded-2xl p-5 border border-slate-200/80 shadow-subtle flex flex-col justify-between">
+            <div>
+              <div className="flex items-center justify-between mb-2">
+                <h2 className="text-sm sm:text-base font-bold text-slate-900">Student Attendance (This Month)</h2>
+                {totalAttRecords > 0 && (
+                  <Badge variant="emerald" size="xs">{totalAttRecords} Records</Badge>
+                )}
+              </div>
+              <p className="text-xs text-slate-400 mb-4">Real distribution from verified classroom session records</p>
+
+              {totalAttRecords === 0 ? (
+                <div className="py-10 text-center text-slate-500">
+                  <CalendarCheck className="w-8 h-8 text-slate-300 mx-auto mb-2" />
+                  <p className="text-xs font-medium text-slate-600">No attendance sessions recorded yet this month.</p>
+                  <p className="text-[11px] text-slate-400 mt-1">Use the "Mark Attendance" button above to record session rosters.</p>
+                </div>
+              ) : (
+                <div className="flex flex-col sm:flex-row items-center justify-center gap-6 py-2">
+                  <SimpleDonutChart
+                    data={attendanceDonutData}
+                    centerLabel="Compliance"
+                    centerValue={`${attPercentage}%`}
+                    size={170}
+                    thickness={20}
+                  />
+                  <div className="space-y-2 text-xs">
+                    <div className="flex items-center space-x-2">
+                      <span className="w-3 h-3 rounded-full bg-emerald-500 inline-block" />
+                      <span className="font-medium text-slate-700">Present:</span>
+                      <span className="font-bold text-slate-900">{presentCount}</span>
+                    </div>
+                    <div className="flex items-center space-x-2">
+                      <span className="w-3 h-3 rounded-full bg-rose-500 inline-block" />
+                      <span className="font-medium text-slate-700">Absent:</span>
+                      <span className="font-bold text-slate-900">{absentCount}</span>
+                    </div>
+                    <div className="flex items-center space-x-2">
+                      <span className="w-3 h-3 rounded-full bg-amber-500 inline-block" />
+                      <span className="font-medium text-slate-700">Late:</span>
+                      <span className="font-bold text-slate-900">{lateCount}</span>
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         </div>
 
         {/* Row 3: My Subjects & Recent Activities */}
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-          <div className="lg:col-span-6 bg-white rounded-2xl p-5 border border-slate-200/80 shadow-subtle">
-            <div className="flex items-center justify-between mb-4">
-              <h2 className="text-sm sm:text-base font-bold text-slate-900">My Subjects</h2>
-              <button
-                onClick={() => setFacultyActiveTab('courses')}
-                className="text-xs font-semibold text-purple-600 hover:text-purple-700"
-              >
-                View All
-              </button>
-            </div>
-            <div className="space-y-3">
-              {facultySubjectsList.map((sub, i) => (
-                <div key={i} className="flex items-center justify-between p-2.5 rounded-xl hover:bg-slate-50 transition-colors">
-                  <div className="flex items-center space-x-3">
-                    <div className="w-8 h-8 rounded-full bg-purple-50 text-purple-600 flex items-center justify-center">
-                      <BookOpen className="w-4 h-4 text-purple-600" />
-                    </div>
-                    <div>
-                      <span className="text-xs sm:text-sm font-semibold text-slate-900">{sub.code} - {sub.name}</span>
-                    </div>
-                  </div>
-                  <span className="text-xs font-medium text-slate-500">{sub.students} Students</span>
+          <div className="lg:col-span-6 bg-white rounded-2xl p-5 border border-slate-200/80 shadow-subtle flex flex-col justify-between">
+            <div>
+              <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
+                <div className="flex items-center space-x-2">
+                  <h2 className="text-sm sm:text-base font-bold text-slate-900">My Subjects</h2>
+                  <Badge variant="purple" size="xs">
+                    {assignedSubjects.length} Assigned
+                  </Badge>
                 </div>
-              ))}
+                <div className="flex items-center space-x-2">
+                  <span className="text-[11px] font-medium text-purple-700 bg-purple-50 px-2 py-0.5 rounded-md border border-purple-100">
+                    AY {subjectYearFilter}
+                  </span>
+                  <button
+                    onClick={() => handleTabChange('courses')}
+                    className="text-xs font-semibold text-purple-600 hover:text-purple-700 cursor-pointer"
+                  >
+                    View All &rarr;
+                  </button>
+                </div>
+              </div>
+
+              {/* Filter and Search Bar for Assigned Subjects */}
+              <div className="flex items-center gap-2 mb-3">
+                <div className="relative flex-1">
+                  <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
+                  <input
+                    type="text"
+                    placeholder="Search by code or title..."
+                    value={subjectSearch}
+                    onChange={(e) => setSubjectSearch(e.target.value)}
+                    className="w-full pl-8 pr-7 py-1 text-xs rounded-lg border border-slate-200 focus:outline-none focus:ring-1 focus:ring-purple-500 bg-slate-50/50"
+                  />
+                  {subjectSearch && (
+                    <button
+                      onClick={() => setSubjectSearch('')}
+                      className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 cursor-pointer"
+                    >
+                      <X className="w-3 h-3" />
+                    </button>
+                  )}
+                </div>
+
+                <select
+                  value={subjectSemesterFilter}
+                  onChange={(e) => setSubjectSemesterFilter(e.target.value)}
+                  className="text-xs px-2 py-1 rounded-lg border border-slate-200 bg-slate-50/50 text-slate-700 focus:outline-none focus:ring-1 focus:ring-purple-500 cursor-pointer"
+                >
+                  <option value="all">All Semesters</option>
+                  {[1, 2, 3, 4, 5, 6, 7, 8].map((s) => (
+                    <option key={s} value={s}>Semester {s}</option>
+                  ))}
+                </select>
+              </div>
+
+              {filteredMySubjects.length === 0 ? (
+                <div className="py-8 text-center text-slate-500">
+                  <BookOpen className="w-8 h-8 text-slate-300 mx-auto mb-2" />
+                  <p className="text-xs font-medium text-slate-600">
+                    {assignedSubjects.length === 0
+                      ? 'No teaching allocations assigned to your profile.'
+                      : 'No subjects match your filter criteria.'}
+                  </p>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {filteredMySubjects.map((sub) => {
+                    const studentCount = sub.enrolledCount !== undefined
+                      ? sub.enrolledCount
+                      : getStudentsForSubject(sub._id || sub.id).length;
+                    const completion = sub.syllabusCompletion || 0;
+
+                    return (
+                      <div
+                        key={sub._id || sub.id}
+                        onClick={() => {
+                          setSelectedDetailSubject(sub);
+                          setIsSubjectDetailsOpen(true);
+                        }}
+                        className="p-3.5 rounded-xl hover:bg-purple-50/40 transition-all border border-slate-200/90 hover:border-purple-300 shadow-xs cursor-pointer group"
+                      >
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="flex items-start space-x-3">
+                            <div className="w-9 h-9 rounded-xl bg-purple-100 text-purple-700 flex items-center justify-center flex-shrink-0 font-mono font-bold text-xs mt-0.5 group-hover:scale-105 transition-transform">
+                              {sub.code?.slice(0, 5) || 'SUB'}
+                            </div>
+                            <div>
+                              <div className="flex items-center space-x-1.5 flex-wrap">
+                                <span className="text-xs sm:text-sm font-bold text-slate-900 group-hover:text-purple-900 transition-colors">
+                                  {sub.code} - {sub.name}
+                                </span>
+                              </div>
+                              <span className="text-[11px] text-slate-500 block mt-0.5">
+                                Semester {sub.semester} &bull; {sub.credits} Credits &bull; Section {sub.section || 'A'} &bull; Room {sub.roomNumber || 'LH-101'}
+                              </span>
+                            </div>
+                          </div>
+
+                          <Button
+                            variant="secondary"
+                            size="xs"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setSelectedDetailSubject(sub);
+                              setIsSubjectDetailsOpen(true);
+                            }}
+                            className="group-hover:border-purple-300 group-hover:text-purple-700 whitespace-nowrap"
+                          >
+                            View Details &rarr;
+                          </Button>
+                        </div>
+
+                        {/* Progress Bar & Enrolled Count */}
+                        <div className="mt-2.5 pt-2 border-t border-slate-100 flex items-center justify-between gap-3 text-xs">
+                          <div className="flex-1 flex items-center space-x-2">
+                            <span className="text-[10px] text-slate-400 whitespace-nowrap">Syllabus:</span>
+                            <div className="w-20 sm:w-28 h-1.5 bg-slate-100 rounded-full overflow-hidden">
+                              <div
+                                className="h-full bg-gradient-to-r from-purple-500 to-indigo-600 rounded-full"
+                                style={{ width: `${completion}%` }}
+                              />
+                            </div>
+                            <span className="text-[10px] font-semibold text-purple-700">{completion}%</span>
+                          </div>
+
+                          <Badge variant="purple" size="xs">
+                            {studentCount} Enrolled
+                          </Badge>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
             </div>
           </div>
 
@@ -657,37 +1529,60 @@ export const FacultyDashboard = () => {
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-sm sm:text-base font-bold text-slate-900">Recent Activities</h2>
               <button
-                onClick={() => setFacultyActiveTab('roster')}
+                onClick={() => handleTabChange('roster')}
                 className="text-xs font-semibold text-purple-600 hover:text-purple-700 cursor-pointer"
               >
-                View Rosters
+                View Rosters &rarr;
               </button>
             </div>
-            <div className="space-y-3">
-              {facultyRecentActivities.map((act, i) => (
-                <div key={i} className="flex items-center justify-between p-2.5 rounded-xl hover:bg-slate-50 transition-colors">
-                  <div className="flex items-center space-x-3">
-                    <div className={`w-8 h-8 rounded-full flex items-center justify-center ${act.color.split(' ')[1]}`}>
-                      <act.icon className={`w-4 h-4 ${act.color.split(' ')[0]}`} />
+
+            {activities.length === 0 ? (
+              <div className="py-8 text-center text-slate-500">
+                <FileSpreadsheet className="w-8 h-8 text-slate-300 mx-auto mb-2" />
+                <p className="text-xs font-medium text-slate-600">No recorded faculty actions yet.</p>
+                <p className="text-[11px] text-slate-400 mt-1">Actions like attendance and marks entry will appear here.</p>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {activities.slice(0, 4).map((act, i) => {
+                  const display = getActivityDisplay(act);
+                  const Icon = display.icon;
+                  return (
+                    <div key={act._id || i} className="flex items-center justify-between p-2.5 rounded-xl hover:bg-slate-50 transition-colors border border-slate-100">
+                      <div className="flex items-center space-x-3">
+                        <div className={`w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 ${display.color.split(' ')[1]}`}>
+                          <Icon className={`w-4 h-4 ${display.color.split(' ')[0]}`} />
+                        </div>
+                        <div>
+                          <p className="text-xs sm:text-sm font-semibold text-slate-800">{display.title}</p>
+                          <p className="text-[11px] text-slate-400 mt-0.5">{formatRelativeTime(act.createdAt)}</p>
+                        </div>
+                      </div>
+                      <Badge variant="slate" size="xs">Audit Log</Badge>
                     </div>
-                    <div>
-                      <p className="text-xs sm:text-sm font-semibold text-slate-800">{act.title}</p>
-                      <p className="text-[11px] text-slate-400 mt-0.5">{act.time}</p>
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
+                  );
+                })}
+              </div>
+            )}
           </div>
         </div>
 
-        {/* Navigation Tabs */}
-        <div className="flex border-b border-navy-200 bg-white px-4 rounded-xl shadow-subtle overflow-x-auto">
+        {/* Row 4: Faculty Notifications & Action Center */}
+        <FacultyNotificationsCenter
+          assignments={assignments}
+          exams={exams}
+          timetableSlots={mySlots}
+          notices={notices}
+          onNavigateTab={handleTabChange}
+        />
+
+        {/* Navigation Tabs (URL Synchronized) */}
+        <div ref={tabsContainerRef} id="faculty-tabs-container" className="flex border-b border-navy-200 bg-white px-4 rounded-xl shadow-subtle overflow-x-auto scroll-mt-6">
           <button
-            onClick={() => setFacultyActiveTab('timetable')}
-            className={`py-3.5 px-4 text-xs font-bold uppercase tracking-wider border-b-2 transition-colors flex items-center space-x-2 whitespace-nowrap ${
+            onClick={() => handleTabChange('timetable')}
+            className={`py-3.5 px-4 text-xs font-bold uppercase tracking-wider border-b-2 transition-colors flex items-center space-x-2 whitespace-nowrap cursor-pointer ${
               facultyActiveTab === 'timetable'
-                ? 'border-teal-600 text-teal-800'
+                ? 'border-purple-600 text-purple-800'
                 : 'border-transparent text-navy-500 hover:text-navy-900'
             }`}
           >
@@ -696,98 +1591,169 @@ export const FacultyDashboard = () => {
           </button>
 
           <button
-            onClick={() => setFacultyActiveTab('courses')}
-            className={`py-3.5 px-4 text-xs font-bold uppercase tracking-wider border-b-2 transition-colors flex items-center space-x-2 whitespace-nowrap ${
+            onClick={() => handleTabChange('courses')}
+            className={`py-3.5 px-4 text-xs font-bold uppercase tracking-wider border-b-2 transition-colors flex items-center space-x-2 whitespace-nowrap cursor-pointer ${
               facultyActiveTab === 'courses'
-                ? 'border-teal-600 text-teal-800'
+                ? 'border-purple-600 text-purple-800'
                 : 'border-transparent text-navy-500 hover:text-navy-900'
             }`}
           >
             <BookOpen className="w-4 h-4" />
-            <span>Assigned Courses & Syllabus ({mySubjects.length})</span>
+            <span>Assigned Courses ({assignedSubjects.length})</span>
           </button>
 
           <button
-            onClick={() => setFacultyActiveTab('roster')}
-            className={`py-3.5 px-4 text-xs font-bold uppercase tracking-wider border-b-2 transition-colors flex items-center space-x-2 whitespace-nowrap ${
+            onClick={() => handleTabChange('roster')}
+            className={`py-3.5 px-4 text-xs font-bold uppercase tracking-wider border-b-2 transition-colors flex items-center space-x-2 whitespace-nowrap cursor-pointer ${
               facultyActiveTab === 'roster'
-                ? 'border-teal-600 text-teal-800'
+                ? 'border-purple-600 text-purple-800'
                 : 'border-transparent text-navy-500 hover:text-navy-900'
             }`}
           >
             <Users className="w-4 h-4" />
-            <span>Classroom Student Rosters ({myStudents.length})</span>
+            <span>Classroom Student Rosters ({assignedStudents.length})</span>
           </button>
 
           <button
-            onClick={() => setFacultyActiveTab('exams')}
-            className={`py-3.5 px-4 text-xs font-bold uppercase tracking-wider border-b-2 transition-colors flex items-center space-x-2 whitespace-nowrap ${
+            onClick={() => handleTabChange('pending')}
+            className={`py-3.5 px-4 text-xs font-bold uppercase tracking-wider border-b-2 transition-colors flex items-center space-x-2 whitespace-nowrap cursor-pointer ${
+              facultyActiveTab === 'pending'
+                ? 'border-purple-600 text-purple-800'
+                : 'border-transparent text-navy-500 hover:text-navy-900'
+            }`}
+          >
+            <AlertTriangle className="w-4 h-4 text-amber-500" />
+            <span>Pending Tasks ({pendingTasks.length})</span>
+          </button>
+
+          <button
+            onClick={() => handleTabChange('exams')}
+            className={`py-3.5 px-4 text-xs font-bold uppercase tracking-wider border-b-2 transition-colors flex items-center space-x-2 whitespace-nowrap cursor-pointer ${
               facultyActiveTab === 'exams'
-                ? 'border-teal-600 text-teal-800'
+                ? 'border-purple-600 text-purple-800'
                 : 'border-transparent text-navy-500 hover:text-navy-900'
             }`}
           >
             <Award className="w-4 h-4" />
-            <span>Examinations & Assessments ({exams.length})</span>
+            <span>Examinations & Marks ({exams.length})</span>
+          </button>
+
+          <button
+            onClick={() => handleTabChange('assignments')}
+            className={`py-3.5 px-4 text-xs font-bold uppercase tracking-wider border-b-2 transition-colors flex items-center space-x-2 whitespace-nowrap cursor-pointer ${
+              facultyActiveTab === 'assignments'
+                ? 'border-purple-600 text-purple-800'
+                : 'border-transparent text-navy-500 hover:text-navy-900'
+            }`}
+          >
+            <FileText className="w-4 h-4" />
+            <span>Assignments & Submissions ({assignments.length})</span>
+          </button>
+
+          <button
+            onClick={() => handleTabChange('analytics')}
+            className={`py-3.5 px-4 text-xs font-bold uppercase tracking-wider border-b-2 transition-colors flex items-center space-x-2 whitespace-nowrap cursor-pointer ${
+              facultyActiveTab === 'analytics'
+                ? 'border-purple-600 text-purple-800'
+                : 'border-transparent text-navy-500 hover:text-navy-900'
+            }`}
+          >
+            <BarChart2 className="w-4 h-4" />
+            <span>Student Performance Analytics</span>
+          </button>
+
+          <button
+            onClick={() => handleTabChange('syllabus')}
+            className={`py-3.5 px-4 text-xs font-bold uppercase tracking-wider border-b-2 transition-colors flex items-center space-x-2 whitespace-nowrap cursor-pointer ${
+              facultyActiveTab === 'syllabus'
+                ? 'border-purple-600 text-purple-800'
+                : 'border-transparent text-navy-500 hover:text-navy-900'
+            }`}
+          >
+            <BookOpen className="w-4 h-4" />
+            <span>Syllabus Tracker</span>
+          </button>
+
+          <button
+            onClick={() => handleTabChange('resources')}
+            className={`py-3.5 px-4 text-xs font-bold uppercase tracking-wider border-b-2 transition-colors flex items-center space-x-2 whitespace-nowrap cursor-pointer ${
+              facultyActiveTab === 'resources'
+                ? 'border-purple-600 text-purple-800'
+                : 'border-transparent text-navy-500 hover:text-navy-900'
+            }`}
+          >
+            <FolderKanban className="w-4 h-4" />
+            <span>Resource Library</span>
+          </button>
+
+          <button
+            onClick={() => handleTabChange('appointments')}
+            className={`py-3.5 px-4 text-xs font-bold uppercase tracking-wider border-b-2 transition-colors flex items-center space-x-2 whitespace-nowrap cursor-pointer ${
+              facultyActiveTab === 'appointments'
+                ? 'border-purple-600 text-purple-800'
+                : 'border-transparent text-navy-500 hover:text-navy-900'
+            }`}
+          >
+            <CalendarDays className="w-4 h-4" />
+            <span>Appointments</span>
+          </button>
+
+          <button
+            onClick={() => handleTabChange('calendar')}
+            className={`py-3.5 px-4 text-xs font-bold uppercase tracking-wider border-b-2 transition-colors flex items-center space-x-2 whitespace-nowrap cursor-pointer ${
+              facultyActiveTab === 'calendar'
+                ? 'border-purple-600 text-purple-800'
+                : 'border-transparent text-navy-500 hover:text-navy-900'
+            }`}
+          >
+            <Calendar className="w-4 h-4" />
+            <span>Academic Calendar</span>
           </button>
         </div>
 
         {/* TAB 1: Weekly Timetable */}
         {facultyActiveTab === 'timetable' && (
-          <Card
-            title="Weekly Teaching Schedule & Timetable Slots"
-            subtitle="Lecture periods and classroom allotments assigned to your faculty profile"
-          >
-            {mySlots.length === 0 ? (
-              <p className="text-xs text-navy-400 py-6 text-center">No individual timetable sessions scheduled for your profile this week.</p>
-            ) : (
-              <div className="space-y-2">
-                {mySlots.map((slot) => (
-                  <div key={slot._id || slot.id} className="p-3.5 rounded-xl bg-warm-50 border border-navy-100 flex items-center justify-between text-xs">
-                    <div>
-                      <span className="font-bold text-navy-950 block">{slot.subject?.name || 'Class Lecture'}</span>
-                      <span className="text-[11px] text-navy-500 font-mono">
-                        {slot.dayOfWeek?.toUpperCase()} &bull; Period {slot.periodNumber} ({slot.startTime} - {slot.endTime})
-                      </span>
-                    </div>
-                    <div className="text-right">
-                      <Badge variant="teal" size="xs">Room {slot.roomNumber || 'LH-101'}</Badge>
-                      <span className="text-[10px] text-navy-500 block mt-1">Section A &bull; {slot.department?.name || 'Engineering'}</span>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </Card>
+          <TeachingScheduleSection
+            timetableSlots={mySlots}
+            myDeptName={myDeptName}
+            onOpenAttendanceModal={(subId, period) => handleOpenAttendanceModal(subId, period)}
+            onNavigateToSubject={(sub) => {
+              setSelectedDetailSubject(sub);
+              setSubjectDetailsInitialTab('overview');
+              setIsSubjectDetailsOpen(true);
+            }}
+          />
         )}
 
-        {/* TAB 2: Courses */}
+        {/* TAB 2: Assigned Courses */}
         {facultyActiveTab === 'courses' && (
-          <Card
-            title="Assigned Courses & Curriculum Syllabus"
-            subtitle="Subject syllabus, course codes, and lecture credit allocations"
-          >
-            {mySubjects.length === 0 ? (
-              <p className="text-xs text-navy-400 py-6 text-center">No curriculum subjects allocated.</p>
-            ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                {mySubjects.map((sub) => (
-                  <div key={sub._id || sub.id} className="p-3.5 rounded-xl bg-warm-50 border border-navy-100 flex items-center justify-between text-xs">
-                    <div>
-                      <span className="font-bold text-navy-950 block">{sub.name}</span>
-                      <span className="text-[11px] text-navy-500 font-mono">
-                        Code: {sub.code} &bull; Semester {sub.semester}
-                      </span>
-                    </div>
-                    <div className="text-right">
-                      <Badge variant="navy" size="xs">{sub.credits} Credits</Badge>
-                      <span className="text-[10px] text-navy-500 uppercase block mt-1">{sub.type || 'Theory'}</span>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </Card>
+          <AssignedCoursesSection
+            assignedSubjects={assignedSubjects}
+            isLoading={isLoading}
+            onRetry={loadData}
+            onRefresh={loadData}
+            onOpenDetails={(sub, initialTab = 'overview') => {
+              setSelectedDetailSubject(sub);
+              setSubjectDetailsInitialTab(initialTab);
+              setIsSubjectDetailsOpen(true);
+            }}
+            materials={materials}
+            onRefreshMaterials={handleRefreshMaterials}
+            onAddToast={addToast}
+            onNavigateToAttendance={(subId) => {
+              setAttendanceSubjectId(subId);
+              handleOpenAttendanceModal(subId);
+            }}
+          />
+        )}
+
+        {/* TAB 4: Pending Tasks */}
+        {facultyActiveTab === 'pending' && (
+          <PendingTasksSection
+            tasks={pendingTasks}
+            onRefresh={loadData}
+            isLoading={isLoading}
+          />
         )}
 
         {/* TAB 3: Student Roster */}
@@ -796,150 +1762,604 @@ export const FacultyDashboard = () => {
             title="Classroom Student Rosters"
             subtitle={`Enrolled undergraduate students in Department of ${myDeptName}`}
             headerAction={
-              <Button variant="teal" size="xs" onClick={() => setIsMarkAttendanceOpen(true)} icon={CalendarCheck}>
-                Mark Session
-              </Button>
+              <div className="flex items-center gap-2">
+                <Button variant="secondary" size="xs" onClick={handleExportRosterCSV} icon={Download}>
+                  Export CSV
+                </Button>
+                <Button variant="teal" size="xs" onClick={handleOpenAttendanceModal} icon={CalendarCheck}>
+                  Mark Session
+                </Button>
+              </div>
             }
           >
-            {myStudents.length === 0 ? (
-              <p className="text-xs text-navy-400 py-6 text-center">No student records enrolled in your department.</p>
+            {/* Filter and Search Bar */}
+            <div className="flex flex-col sm:flex-row items-center gap-3 mb-4">
+              <div className="relative flex-1 w-full">
+                <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                <input
+                  type="text"
+                  placeholder="Search students by name or roll number..."
+                  value={rosterSearch}
+                  onChange={(e) => {
+                    setRosterSearch(e.target.value);
+                    setRosterPage(1);
+                  }}
+                  className="w-full pl-9 pr-3 py-1.5 text-xs rounded-lg border border-slate-200 focus:outline-none focus:ring-1 focus:ring-purple-500"
+                />
+              </div>
+
+              <select
+                value={rosterSubjectFilter}
+                onChange={(e) => {
+                  setRosterSubjectFilter(e.target.value);
+                  setRosterPage(1);
+                }}
+                className="text-xs px-2.5 py-1.5 rounded-lg border border-slate-200 text-slate-700 focus:outline-none focus:ring-1 focus:ring-purple-500"
+              >
+                <option value="all">All Assigned Subjects</option>
+                {assignedSubjects.map((s) => (
+                  <option key={s._id || s.id} value={s._id || s.id}>
+                    {s.code} - {s.name}
+                  </option>
+                ))}
+              </select>
+
+              <select
+                value={rosterSemesterFilter}
+                onChange={(e) => {
+                  setRosterSemesterFilter(e.target.value);
+                  setRosterPage(1);
+                }}
+                className="text-xs px-2.5 py-1.5 rounded-lg border border-slate-200 text-slate-700 focus:outline-none focus:ring-1 focus:ring-purple-500 cursor-pointer"
+              >
+                <option value="all">All Semesters</option>
+                {[1, 2, 3, 4, 5, 6, 7, 8].map((sem) => (
+                  <option key={sem} value={sem}>Semester {sem}</option>
+                ))}
+              </select>
+
+              <select
+                value={rosterSectionFilter}
+                onChange={(e) => {
+                  setRosterSectionFilter(e.target.value);
+                  setRosterPage(1);
+                }}
+                className="text-xs px-2.5 py-1.5 rounded-lg border border-slate-200 text-slate-700 focus:outline-none focus:ring-1 focus:ring-purple-500 cursor-pointer"
+              >
+                <option value="all">All Sections</option>
+                <option value="A">Section A</option>
+                <option value="B">Section B</option>
+                <option value="C">Section C</option>
+              </select>
+            </div>
+
+            {filteredRosterStudents.length === 0 ? (
+              <p className="text-xs text-navy-400 py-6 text-center">No student records match the active criteria.</p>
             ) : (
               <div className="space-y-2">
-                {myStudents.slice(0, 15).map((stud) => (
-                  <div key={stud._id || stud.id} className="p-3 rounded-xl bg-warm-50 border border-navy-100 flex items-center justify-between text-xs">
-                    <div>
-                      <span className="font-mono font-bold text-teal-900 block">{stud.rollNumber}</span>
-                      <span className="font-semibold text-navy-950 block">{stud.user?.name || 'Student'}</span>
-                      <span className="text-[11px] text-navy-500 font-mono">{stud.user?.email}</span>
+                {paginatedRosterStudents.map((stud) => {
+                  const stRecords = relevantAttendance.filter((r) => {
+                    const rStId = r.student?._id || r.student?.id || r.student;
+                    return String(rStId) === String(stud._id || stud.id);
+                  });
+                  const present = stRecords.filter((r) => r.status === 'present').length;
+                  const attPct = stRecords.length > 0 ? `${Math.round((present / stRecords.length) * 100)}%` : null;
+
+                  return (
+                    <div
+                      key={stud._id || stud.id}
+                      onClick={() => {
+                        const firstSub = assignedSubjects[0];
+                        if (firstSub) {
+                          setSelectedDetailSubject(firstSub);
+                          setSubjectDetailsInitialTab('roster');
+                          setIsSubjectDetailsOpen(true);
+                        }
+                      }}
+                      className="p-3 rounded-xl bg-warm-50 hover:bg-purple-50/50 border border-navy-100 hover:border-purple-200 transition-colors flex items-center justify-between text-xs cursor-pointer group"
+                      title="Click to view student cohort profile"
+                    >
+                      <div>
+                        <div className="flex items-center space-x-2">
+                          <span className="font-mono font-bold text-teal-900">{stud.rollNumber}</span>
+                          <span className="font-semibold text-navy-950">{stud.user?.name || 'Student'}</span>
+                        </div>
+                        <span className="text-[11px] text-navy-500 font-mono block mt-0.5">{stud.user?.email}</span>
+                      </div>
+                      <div className="text-right">
+                        <div className="flex items-center justify-end space-x-2">
+                          <span className="text-xs font-bold text-navy-800">Sem {stud.currentSemester}</span>
+                          {attPct ? (
+                            <Badge variant="emerald" size="xs">{attPct} Attended</Badge>
+                          ) : (
+                            <Badge variant="slate" size="xs">No Attendance</Badge>
+                          )}
+                        </div>
+                        <span className="text-[11px] text-navy-500 font-mono block mt-1">{stud.batchYear} &bull; {stud.admissionStatus || 'Enrolled'}</span>
+                      </div>
                     </div>
-                    <div className="text-right">
-                      <span className="text-xs font-bold text-navy-800 block">Semester {stud.currentSemester}</span>
-                      <span className="text-[11px] text-navy-500 font-mono block">{stud.batchYear}</span>
+                  );
+                })}
+
+                {/* Pagination Controls */}
+                {totalRosterPages > 1 && (
+                  <div className="flex items-center justify-between pt-3 border-t border-slate-100 text-xs">
+                    <span className="text-slate-500">
+                      Showing {(rosterPage - 1) * ROSTER_PAGE_SIZE + 1} to {Math.min(rosterPage * ROSTER_PAGE_SIZE, filteredRosterStudents.length)} of {filteredRosterStudents.length} students
+                    </span>
+                    <div className="flex items-center space-x-2">
+                      <Button
+                        variant="secondary"
+                        size="xs"
+                        disabled={rosterPage === 1}
+                        onClick={() => setRosterPage((p) => Math.max(1, p - 1))}
+                        icon={ChevronLeft}
+                      >
+                        Previous
+                      </Button>
+                      <span className="font-semibold text-slate-700 px-1">
+                        {rosterPage} / {totalRosterPages}
+                      </span>
+                      <Button
+                        variant="secondary"
+                        size="xs"
+                        disabled={rosterPage >= totalRosterPages}
+                        onClick={() => setRosterPage((p) => Math.min(totalRosterPages, p + 1))}
+                        icon={ChevronRight}
+                      >
+                        Next
+                      </Button>
                     </div>
                   </div>
-                ))}
+                )}
               </div>
             )}
           </Card>
         )}
 
-        {/* TAB 4: Exams */}
+        {/* TAB 4: Exams & Marks Entry */}
         {facultyActiveTab === 'exams' && (
           <Card
-            title="Institutional Examinations & Assessment Information"
-            subtitle="Scheduled mid-term and semester evaluation cycles"
+            title="Institutional Examinations & Marks Entry"
+            subtitle="Scheduled mid-term/semester evaluations and student grade entry"
+            headerAction={
+              <div className="flex items-center gap-2">
+                <Button variant="secondary" size="xs" onClick={handleExportMarksCSV} icon={Download}>
+                  Export CSV
+                </Button>
+                <Button variant="teal" size="xs" onClick={handleOpenMarksModal} icon={Award}>
+                  Enter / Edit Marks
+                </Button>
+              </div>
+            }
           >
-            {exams.length === 0 ? (
-              <p className="text-xs text-navy-400 py-6 text-center">No examination cycles currently scheduled.</p>
+            {/* Exam and Subject Selector */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-4">
+              <div>
+                <label className="text-xs font-semibold text-slate-700 block mb-1">Select Examination Cycle</label>
+                <select
+                  value={effectiveExamId}
+                  onChange={(e) => setSelectedExamId(e.target.value)}
+                  className="w-full text-xs px-2.5 py-1.5 rounded-lg border border-slate-200 text-slate-700 focus:outline-none focus:ring-1 focus:ring-purple-500"
+                >
+                  {exams.map((ex) => (
+                    <option key={ex._id || ex.id} value={ex._id || ex.id}>
+                      {ex.name} ({ex.examType} - Sem {ex.semester})
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="text-xs font-semibold text-slate-700 block mb-1">Select Assigned Subject</label>
+                <select
+                  value={effectiveExamSubjectId}
+                  onChange={(e) => setSelectedExamSubjectId(e.target.value)}
+                  className="w-full text-xs px-2.5 py-1.5 rounded-lg border border-slate-200 text-slate-700 focus:outline-none focus:ring-1 focus:ring-purple-500"
+                >
+                  {assignedSubjects.map((s) => (
+                    <option key={s._id || s.id} value={s._id || s.id}>
+                      {s.code} - {s.name} (Sem {s.semester})
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            {filteredExamResults.length === 0 ? (
+              <div className="py-8 text-center text-slate-500">
+                <Award className="w-8 h-8 text-slate-300 mx-auto mb-2" />
+                <p className="text-xs font-medium text-slate-600">No marks recorded yet for this examination and subject.</p>
+                <p className="text-[11px] text-slate-400 mt-1">Click "Enter / Edit Marks" above to evaluate student performance.</p>
+              </div>
             ) : (
-              <div className="space-y-2">
-                {exams.map((ex) => (
-                  <div key={ex.id || ex._id} className="p-3.5 rounded-xl bg-warm-50 border border-navy-100 flex items-center justify-between text-xs">
-                    <div>
-                      <span className="font-bold text-navy-950 block">{ex.name}</span>
-                      <span className="text-[11px] text-navy-500 font-mono">
-                        {ex.examType?.toUpperCase()} &bull; Semester {ex.semester} ({ex.academicYear})
-                      </span>
-                    </div>
-                    <div className="text-right">
-                      <Badge variant="teal" size="xs">{ex.timelineStatus || 'Scheduled'}</Badge>
-                      <span className="text-[10px] text-navy-500 block mt-1">
-                        {ex.isPublished ? 'Grades Published' : 'Evaluation Pending'}
-                      </span>
-                    </div>
-                  </div>
-                ))}
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-xs">
+                  <thead className="bg-slate-50 text-slate-600 uppercase font-semibold text-[10px] tracking-wider border-b border-slate-200">
+                    <tr>
+                      <th className="py-2.5 px-3">Roll Number</th>
+                      <th className="py-2.5 px-3">Student Name</th>
+                      <th className="py-2.5 px-3">Internal (40)</th>
+                      <th className="py-2.5 px-3">External (60)</th>
+                      <th className="py-2.5 px-3">Total (100)</th>
+                      <th className="py-2.5 px-3">Grade</th>
+                      <th className="py-2.5 px-3 text-right">Status</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {filteredExamResults.map((r) => (
+                      <tr key={r._id || r.id} className="hover:bg-slate-50/60">
+                        <td className="py-2.5 px-3 font-mono font-bold text-slate-800">{r.student?.rollNumber}</td>
+                        <td className="py-2.5 px-3 font-medium text-slate-900">{r.student?.user?.name || 'Student'}</td>
+                        <td className="py-2.5 px-3 font-mono">{r.internalMarks}</td>
+                        <td className="py-2.5 px-3 font-mono">{r.externalMarks}</td>
+                        <td className="py-2.5 px-3 font-mono font-bold">{r.totalMarks}</td>
+                        <td className="py-2.5 px-3">
+                          <Badge variant={r.grade === 'F' ? 'danger' : 'emerald'} size="xs">{r.grade}</Badge>
+                        </td>
+                        <td className="py-2.5 px-3 text-right">
+                          <span className={`text-[11px] font-semibold capitalize ${r.status === 'passed' ? 'text-emerald-700' : 'text-rose-700'}`}>
+                            {r.status}
+                          </span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               </div>
             )}
           </Card>
         )}
 
-        {/* Mark Attendance Modal */}
+        {/* TAB 5: Assignments & Submissions */}
+        {facultyActiveTab === 'assignments' && (
+          <AssignmentsSection
+            assignments={assignments}
+            assignedSubjects={assignedSubjects}
+            enrolledStudents={assignedStudents}
+            onCreateAssignment={handleCreateAssignment}
+            onUpdateAssignment={handleUpdateAssignment}
+            onDeleteAssignment={handleDeleteAssignment}
+            onPublishAssignment={handlePublishAssignment}
+            onEvaluateSubmission={handleEvaluateSubmission}
+            isLoading={isLoading}
+          />
+        )}
+
+        {/* TAB 6: Student Performance Analytics */}
+        {facultyActiveTab === 'analytics' && (
+          <StudentPerformanceAnalyticsSection
+            assignedSubjects={assignedSubjects}
+            assignedStudents={assignedStudents}
+            attendanceRecords={attendanceRecords}
+          />
+        )}
+
+        {/* TAB 7: Smart Syllabus Tracker (Phase 3) */}
+        {facultyActiveTab === 'syllabus' && (
+          <SmartSyllabusTrackerSection
+            assignedSubjects={assignedSubjects}
+            timetableSlots={mySlots}
+            onAddToast={addToast}
+          />
+        )}
+
+        {/* TAB 8: Learning Resource Library (Phase 4) */}
+        {facultyActiveTab === 'resources' && (
+          <LearningResourceLibrarySection
+            assignedSubjects={assignedSubjects}
+            onAddToast={addToast}
+          />
+        )}
+
+        {/* TAB 9: Student Appointment System (Phase 5) */}
+        {facultyActiveTab === 'appointments' && (
+          <StudentAppointmentSection
+            assignedSubjects={assignedSubjects}
+            onAddToast={addToast}
+          />
+        )}
+
+        {/* TAB 10: Academic Calendar & Reminders (Phase 6) */}
+        {facultyActiveTab === 'calendar' && (
+          <AcademicCalendarSection
+            onAddToast={addToast}
+            onNavigateTab={handleTabChange}
+          />
+        )}
+
+        {/* Full-Class Classroom Attendance Modal */}
         <Modal
           isOpen={isMarkAttendanceOpen}
           onClose={() => setIsMarkAttendanceOpen(false)}
-          title="Submit Student Attendance Session"
-          subtitle="Records period attendance compliance directly to MongoDB"
-          maxWidth="max-w-md"
+          title="Classroom Attendance Capture"
+          subtitle="Record period session attendance for enrolled students"
+          maxWidth="max-w-2xl"
           footer={
             <>
               <Button variant="secondary" size="sm" onClick={() => setIsMarkAttendanceOpen(false)} disabled={isSubmitting}>
                 Cancel
               </Button>
-              <Button variant="teal" size="sm" onClick={handleMarkAttendanceSubmit} isLoading={isSubmitting}>
-                Submit Attendance
+              <Button variant="teal" size="sm" onClick={handleFullAttendanceSubmit} isLoading={isSubmitting}>
+                Submit Class Attendance ({studentRoster.length} Students)
               </Button>
             </>
           }
         >
-          <form onSubmit={handleMarkAttendanceSubmit} className="space-y-4">
+          <form onSubmit={handleFullAttendanceSubmit} className="space-y-4">
             {formError && <Notification type="error" message={formError} onClose={() => setFormError('')} />}
 
-            <Select
-              label="Curriculum Subject"
-              id="att-subject"
-              required
-              value={attendanceForm.subject}
-              onChange={(e) => setAttendanceForm({ ...attendanceForm, subject: e.target.value })}
-              options={mySubjects.map((s) => ({ value: s._id || s.id, label: `${s.name} (${s.code})` }))}
-            />
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <div>
+                <label className="text-xs font-semibold text-slate-700 block mb-1">Subject</label>
+                <select
+                  value={attendanceSubjectId}
+                  onChange={(e) => handleModalSubjectChange(e.target.value)}
+                  className="w-full text-xs px-2.5 py-1.5 rounded-lg border border-slate-200 text-slate-700 focus:outline-none focus:ring-1 focus:ring-purple-500"
+                >
+                  {assignedSubjects.map((s) => (
+                    <option key={s._id || s.id} value={s._id || s.id}>
+                      {s.code} - {s.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
 
-            <Select
-              label="Student"
-              id="att-student"
-              required
-              value={attendanceForm.studentId}
-              onChange={(e) => setAttendanceForm({ ...attendanceForm, studentId: e.target.value })}
-              options={myStudents.map((st) => ({
-                value: st._id || st.id,
-                label: `${st.rollNumber} - ${st.user?.name || 'Student'}`
-              }))}
-            />
+              <div>
+                <label className="text-xs font-semibold text-slate-700 block mb-1">Date</label>
+                <input
+                  type="date"
+                  value={attendanceDate}
+                  onChange={(e) => setAttendanceDate(e.target.value)}
+                  className="w-full text-xs px-2.5 py-1.5 rounded-lg border border-slate-200 text-slate-700 focus:outline-none focus:ring-1 focus:ring-purple-500"
+                />
+              </div>
 
-            <div className="grid grid-cols-2 gap-3">
-              <Input
-                label="Session Date"
-                id="att-date"
-                type="date"
-                required
-                value={attendanceForm.date}
-                onChange={(e) => setAttendanceForm({ ...attendanceForm, date: e.target.value })}
-              />
-              <Select
-                label="Period Slot"
-                id="att-period"
-                value={attendanceForm.periodNumber}
-                onChange={(e) => setAttendanceForm({ ...attendanceForm, periodNumber: e.target.value })}
-                options={[
-                  { value: '1', label: 'Period 1 (09:00 - 10:00)' },
-                  { value: '2', label: 'Period 2 (10:00 - 11:00)' },
-                  { value: '3', label: 'Period 3 (11:15 - 12:15)' },
-                  { value: '4', label: 'Period 4 (12:15 - 01:15)' }
-                ]}
-              />
+              <div>
+                <label className="text-xs font-semibold text-slate-700 block mb-1">Period</label>
+                <select
+                  value={attendancePeriod}
+                  onChange={(e) => setAttendancePeriod(e.target.value)}
+                  className="w-full text-xs px-2.5 py-1.5 rounded-lg border border-slate-200 text-slate-700 focus:outline-none focus:ring-1 focus:ring-purple-500"
+                >
+                  <option value="1">Period 1 (09:00 - 09:50)</option>
+                  <option value="2">Period 2 (10:00 - 10:50)</option>
+                  <option value="3">Period 3 (11:00 - 11:50)</option>
+                  <option value="4">Period 4 (12:00 - 12:50)</option>
+                  <option value="5">Period 5 (01:45 - 02:35)</option>
+                  <option value="6">Period 6 (02:45 - 03:35)</option>
+                </select>
+              </div>
             </div>
 
-            <Select
-              label="Attendance Status"
-              id="att-status"
-              value={attendanceForm.status}
-              onChange={(e) => setAttendanceForm({ ...attendanceForm, status: e.target.value })}
-              options={[
-                { value: 'present', label: 'Present' },
-                { value: 'absent', label: 'Absent' },
-                { value: 'late', label: 'Late' }
-              ]}
-            />
+            <div className="flex items-center justify-between pt-2">
+              <span className="text-xs font-semibold text-slate-800">
+                Enrolled Roster ({studentRoster.length} students)
+              </span>
+              <Button type="button" variant="secondary" size="xs" onClick={handleMarkAllPresent}>
+                Mark All Present
+              </Button>
+            </div>
+
+            {studentRoster.length === 0 ? (
+              <p className="text-xs text-slate-400 py-4 text-center">No enrolled students found for the selected subject.</p>
+            ) : (
+              <div className="max-h-72 overflow-y-auto space-y-2 border border-slate-100 rounded-xl p-2 bg-slate-50/50">
+                {studentRoster.map((stud) => (
+                  <div key={stud.studentId} className="flex items-center justify-between p-2 rounded-lg bg-white border border-slate-200/80 text-xs gap-3">
+                    <div className="min-w-0 flex-1">
+                      <span className="font-mono font-bold text-teal-900 block">{stud.rollNumber}</span>
+                      <span className="font-medium text-slate-900 truncate block">{stud.name}</span>
+                    </div>
+
+                    {/* Status Pill Buttons */}
+                    <div className="flex items-center space-x-1">
+                      <button
+                        type="button"
+                        onClick={() => handleStudentStatusToggle(stud.studentId, 'present')}
+                        className={`px-2 py-1 rounded text-[11px] font-semibold transition-colors cursor-pointer ${
+                          stud.status === 'present'
+                            ? 'bg-emerald-600 text-white'
+                            : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                        }`}
+                      >
+                        Present
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleStudentStatusToggle(stud.studentId, 'late')}
+                        className={`px-2 py-1 rounded text-[11px] font-semibold transition-colors cursor-pointer ${
+                          stud.status === 'late'
+                            ? 'bg-amber-500 text-white'
+                            : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                        }`}
+                      >
+                        Late
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleStudentStatusToggle(stud.studentId, 'absent')}
+                        className={`px-2 py-1 rounded text-[11px] font-semibold transition-colors cursor-pointer ${
+                          stud.status === 'absent'
+                            ? 'bg-rose-600 text-white'
+                            : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                        }`}
+                      >
+                        Absent
+                      </button>
+                    </div>
+
+                    <input
+                      type="text"
+                      placeholder="Remarks (opt)"
+                      value={stud.remarks}
+                      onChange={(e) => handleStudentRemarkChange(stud.studentId, e.target.value)}
+                      className="w-24 text-[11px] px-2 py-1 rounded border border-slate-200 focus:outline-none focus:ring-1 focus:ring-purple-500 hidden sm:block"
+                    />
+                  </div>
+                ))}
+              </div>
+            )}
 
             <Input
-              label="Session Remarks"
-              id="att-remarks"
-              value={attendanceForm.remarks}
-              onChange={(e) => setAttendanceForm({ ...attendanceForm, remarks: e.target.value })}
-              placeholder="e.g. Unit 3 lecture covered"
+              label="Session Summary / Remarks (Optional)"
+              id="full-att-remarks"
+              value={attendanceRemarks}
+              onChange={(e) => setAttendanceRemarks(e.target.value)}
+              placeholder="e.g. Unit 3 Trees & Graphs covered"
             />
           </form>
         </Modal>
+
+        {/* Examination Marks Entry Modal */}
+        <Modal
+          isOpen={isMarksModalOpen}
+          onClose={() => setIsMarksModalOpen(false)}
+          title="Enter Examination Marks"
+          subtitle="Record internal and external evaluation marks for enrolled students"
+          maxWidth="max-w-2xl"
+          footer={
+            <>
+              <Button variant="secondary" size="sm" onClick={() => setIsMarksModalOpen(false)} disabled={isSubmitting}>
+                Cancel
+              </Button>
+              <Button variant="teal" size="sm" onClick={handleBatchMarksSubmit} isLoading={isSubmitting}>
+                Save & Compute Grades
+              </Button>
+            </>
+          }
+        >
+          <form onSubmit={handleBatchMarksSubmit} className="space-y-4">
+            {marksFormError && <Notification type="error" message={marksFormError} onClose={() => setMarksFormError('')} />}
+
+            <div className="bg-purple-50 border border-purple-100 rounded-xl p-3 text-xs text-purple-900">
+              <span className="font-semibold block mb-0.5">Evaluation Guidelines:</span>
+              <span>Internal marks range from <strong>0 to 40</strong>. External marks range from <strong>0 to 60</strong>. Total marks and final letter grades (O, A+, A, B+, B, C, F) are computed dynamically by the institutional grading engine.</span>
+            </div>
+
+            {marksRoster.length === 0 ? (
+              <p className="text-xs text-slate-400 py-4 text-center">No enrolled students found to grade.</p>
+            ) : (
+              <div className="max-h-72 overflow-y-auto space-y-2 border border-slate-100 rounded-xl p-2 bg-slate-50/50">
+                {marksRoster.map((stud) => {
+                  const intVal = stud.internalMarks !== '' ? Number(stud.internalMarks) : null;
+                  const extVal = stud.externalMarks !== '' ? Number(stud.externalMarks) : null;
+                  const total = intVal !== null && extVal !== null ? intVal + extVal : '—';
+
+                  return (
+                    <div key={stud.studentId} className="flex items-center justify-between p-2.5 rounded-lg bg-white border border-slate-200/80 text-xs gap-3">
+                      <div className="min-w-0 flex-1">
+                        <span className="font-mono font-bold text-teal-900 block">{stud.rollNumber}</span>
+                        <span className="font-medium text-slate-900 truncate block">{stud.name}</span>
+                      </div>
+
+                      <div className="flex items-center space-x-2">
+                        <div>
+                          <label className="text-[10px] text-slate-500 block font-semibold">Int (0-40)</label>
+                          <input
+                            type="number"
+                            min="0"
+                            max="40"
+                            step="0.5"
+                            value={stud.internalMarks}
+                            onChange={(e) => handleMarksChange(stud.studentId, 'internalMarks', e.target.value)}
+                            className="w-16 text-xs px-2 py-1 rounded border border-slate-200 font-mono text-center focus:outline-none focus:ring-1 focus:ring-purple-500"
+                            placeholder="0-40"
+                          />
+                        </div>
+
+                        <div>
+                          <label className="text-[10px] text-slate-500 block font-semibold">Ext (0-60)</label>
+                          <input
+                            type="number"
+                            min="0"
+                            max="60"
+                            step="0.5"
+                            value={stud.externalMarks}
+                            onChange={(e) => handleMarksChange(stud.studentId, 'externalMarks', e.target.value)}
+                            className="w-16 text-xs px-2 py-1 rounded border border-slate-200 font-mono text-center focus:outline-none focus:ring-1 focus:ring-purple-500"
+                            placeholder="0-60"
+                          />
+                        </div>
+
+                        <div className="text-center w-14">
+                          <span className="text-[10px] text-slate-500 block font-semibold">Total</span>
+                          <span className="text-xs font-mono font-bold text-purple-700 block mt-1">{total}</span>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </form>
+        </Modal>
+
+        {/* Faculty Profile & Workload Modal */}
+        <FacultyProfileModal
+          isOpen={isProfileModalOpen}
+          onClose={() => setIsProfileModalOpen(false)}
+          profile={myProfile}
+          user={user}
+          assignedSubjects={assignedSubjects}
+          timetableSlots={mySlots}
+        />
+
+        {/* Subject Details Drawer / Modal */}
+        <SubjectDetailsModal
+          isOpen={isSubjectDetailsOpen}
+          onClose={() => {
+            setIsSubjectDetailsOpen(false);
+            setSelectedDetailSubject(null);
+            setSubjectDetailsInitialTab('overview');
+          }}
+          subject={selectedDetailSubject}
+          initialTab={subjectDetailsInitialTab}
+          onNavigateToAttendance={(subId) => {
+            setAttendanceSubjectId(subId);
+            setIsMarkAttendanceOpen(true);
+          }}
+          onRefreshAssignedSubjects={loadData}
+          onAddToast={addToast}
+        />
+
+        {/* KPI Card 1 Detail Modal: Assigned Subjects */}
+        <AssignedSubjectsModal
+          isOpen={isAssignedSubjectsModalOpen}
+          onClose={() => setIsAssignedSubjectsModalOpen(false)}
+          assignedSubjects={assignedSubjects}
+          isLoading={isLoading}
+          onRefresh={loadData}
+          onOpenAttendance={(subId) => handleOpenAttendanceModal(subId)}
+        />
+
+        {/* KPI Card 2 Detail Modal: Weekly Teaching Schedule */}
+        <WeeklyScheduleModal
+          isOpen={isWeeklyScheduleModalOpen}
+          onClose={() => setIsWeeklyScheduleModalOpen(false)}
+          timetableSlots={mySlots}
+          myDeptName={myDeptName}
+          onOpenAttendance={(subId, period) => handleOpenAttendanceModal(subId, period)}
+        />
+
+        {/* KPI Card 3 Detail Modal: Students Under My Subjects */}
+        <StudentsUnderMySubjectsModal
+          isOpen={isStudentsModalOpen}
+          onClose={() => setIsStudentsModalOpen(false)}
+          uniqueStudents={assignedStudents}
+          assignedSubjects={assignedSubjects}
+          attendanceRecords={attendanceRecords}
+          getStudentsForSubject={getStudentsForSubject}
+        />
+
+        {/* KPI Card 4 Detail Modal: Pending Academic Tasks */}
+        <PendingTasksModal
+          isOpen={isPendingTasksModalOpen}
+          onClose={() => setIsPendingTasksModalOpen(false)}
+          tasks={pendingTasks}
+          isLoading={isLoading}
+          onRefresh={loadData}
+        />
       </div>
     );
   }

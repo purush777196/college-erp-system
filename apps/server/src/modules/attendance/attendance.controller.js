@@ -1,6 +1,9 @@
 const Attendance = require('./attendance.model');
 const Student = require('../students/student.model');
 const Department = require('../departments/department.model');
+const Faculty = require('../faculty/faculty.model');
+const mongoose = require('mongoose');
+const { recordAuditLog } = require('../../utils/auditLogger');
 const { sendSuccess, sendError } = require('../../utils/response');
 const { HTTP_STATUS, ROLES } = require('@college-erp/shared');
 
@@ -59,6 +62,12 @@ async function markAttendanceBatch(req, res, next) {
   try {
     const { subject, date, periodNumber = 1, records } = req.body;
 
+    let facultyRef = req.user._id;
+    if (mongoose.connection.readyState === 1 && req.user && req.user.role === ROLES.FACULTY) {
+      const facProfile = await Faculty.findOne({ user: req.user._id });
+      if (facProfile) facultyRef = facProfile._id;
+    }
+
     const operations = records.map((rec) => ({
       updateOne: {
         filter: {
@@ -71,7 +80,7 @@ async function markAttendanceBatch(req, res, next) {
           $set: {
             status: rec.status,
             remarks: rec.remarks || '',
-            faculty: req.user._id
+            faculty: facultyRef
           }
         },
         upsert: true
@@ -79,6 +88,14 @@ async function markAttendanceBatch(req, res, next) {
     }));
 
     const result = await Attendance.bulkWrite(operations);
+
+    await recordAuditLog({
+      req,
+      action: 'ATTENDANCE_MARKED',
+      entityType: 'Attendance',
+      entityId: String(subject),
+      details: { subject, date, periodNumber, count: records.length }
+    });
 
     return sendSuccess(res, {
       statusCode: HTTP_STATUS.OK,

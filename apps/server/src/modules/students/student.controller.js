@@ -1,5 +1,7 @@
 const Student = require('./student.model');
 const Department = require('../departments/department.model');
+const Faculty = require('../faculty/faculty.model');
+const User = require('../auth/auth.model');
 const mongoose = require('mongoose');
 const { sendSuccess, sendError } = require('../../utils/response');
 const { HTTP_STATUS, ROLES } = require('@college-erp/shared');
@@ -52,6 +54,18 @@ async function listStudents(req, res, next) {
         ]
       });
       if (dept) query.department = dept._id;
+    } else if (mongoose.connection.readyState === 1 && req.user?.role === ROLES.FACULTY && !req.query.department) {
+      const facProfile = await Faculty.findOne({ user: req.user._id });
+      if (facProfile && facProfile.department) {
+        query.department = facProfile.department;
+      }
+    }
+
+    if (req.query.course) {
+      const cVal = String(req.query.course).trim();
+      if (mongoose.Types.ObjectId.isValid(cVal)) {
+        query.course = cVal;
+      }
     }
     if (req.query.semester) query.currentSemester = parseInt(req.query.semester, 10);
     if (req.query.batch) query.batchYear = req.query.batch;
@@ -60,6 +74,13 @@ async function listStudents(req, res, next) {
     if (req.query.q && typeof req.query.q === 'string' && req.query.q.trim()) {
       const regex = new RegExp(req.query.q.trim(), 'i');
       query.$or = [{ rollNumber: regex }, { enrollmentNumber: regex }];
+      if (mongoose.connection.readyState === 1) {
+        const matchingUsers = await User.find({ name: regex, role: ROLES.STUDENT }).select('_id');
+        const userIds = matchingUsers.map((u) => u._id);
+        if (userIds.length > 0) {
+          query.$or.push({ user: { $in: userIds } });
+        }
+      }
     }
 
     const [students, total] = await Promise.all([
