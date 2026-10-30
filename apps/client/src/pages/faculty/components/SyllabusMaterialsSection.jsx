@@ -32,6 +32,7 @@ export const SyllabusMaterialsSection = ({
   assignedSubjects = [],
   materials = [],
   onRefreshMaterials,
+  onOpenSubjectDetails,
   onAddToast
 }) => {
   const [selectedSubjectId, setSelectedSubjectId] = useState('');
@@ -218,6 +219,15 @@ export const SyllabusMaterialsSection = ({
         subtitle="Track modular curriculum unit completion and manage digital learning resources"
         headerAction={
           <div className="flex items-center gap-2">
+            {activeSubject && onOpenSubjectDetails && (
+              <Button
+                variant="secondary"
+                size="xs"
+                onClick={() => onOpenSubjectDetails(activeSubject)}
+              >
+                Subject Details Drawer &rarr;
+              </Button>
+            )}
             <Button
               variant="teal"
               size="xs"

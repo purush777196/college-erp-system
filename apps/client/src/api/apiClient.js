@@ -303,6 +303,18 @@ class ApiClient {
     return this.get('/v1/faculty/me/activities');
   }
 
+  getMyAssignedSubjects(params = {}) {
+    const searchParams = new URLSearchParams();
+    if (params.semester) searchParams.append('semester', params.semester);
+    if (params.search) searchParams.append('search', params.search);
+    const qs = searchParams.toString();
+    return this.get(`/v1/faculty/me/assigned-subjects${qs ? `?${qs}` : ''}`);
+  }
+
+  getAssignedSubjectStudents(subjectId) {
+    return this.get(`/v1/faculty/me/assigned-subjects/${subjectId}/students`);
+  }
+
   createFaculty(data) {
     return this.post('/v1/faculty', data);
   }

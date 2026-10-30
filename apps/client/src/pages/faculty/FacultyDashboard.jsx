@@ -62,6 +62,7 @@ import SyllabusMaterialsSection from './components/SyllabusMaterialsSection';
 import AttendanceAnalyticsSection from './components/AttendanceAnalyticsSection';
 import FacultyProfileModal from './components/FacultyProfileModal';
 import FacultyNotificationsCenter from './components/FacultyNotificationsCenter';
+import SubjectDetailsModal from './components/SubjectDetailsModal';
 
 function formatRelativeTime(dateString) {
   if (!dateString) return 'Recently';
@@ -131,6 +132,12 @@ export const FacultyDashboard = () => {
   const [results, setResults] = useState([]);
   const [assignments, setAssignments] = useState([]);
   const [materials, setMaterials] = useState([]);
+  const [dbAssignedSubjects, setDbAssignedSubjects] = useState([]);
+  const [selectedDetailSubject, setSelectedDetailSubject] = useState(null);
+  const [isSubjectDetailsOpen, setIsSubjectDetailsOpen] = useState(false);
+  const [subjectSearch, setSubjectSearch] = useState('');
+  const [subjectSemesterFilter, setSubjectSemesterFilter] = useState('all');
+  const [subjectYearFilter, setSubjectYearFilter] = useState('2025-26');
   const [isProfileModalOpen, setIsProfileModalOpen] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
 
@@ -200,7 +207,7 @@ export const FacultyDashboard = () => {
     setIsLoading(true);
     try {
       if (isFacultyRole) {
-        const [myProfRes, subjRes, timeRes, studRes, examRes, attRes, actRes, notRes, resRes, assignRes, matRes] = await Promise.all([
+        const [myProfRes, subjRes, timeRes, studRes, examRes, attRes, actRes, notRes, resRes, assignRes, matRes, myAssignedRes] = await Promise.all([
           api.getMyFacultyProfile().catch(() => ({ data: null })),
           api.getSubjects().catch(() => ({ data: [] })),
           api.getTimetable().catch(() => ({ data: [] })),
@@ -211,7 +218,8 @@ export const FacultyDashboard = () => {
           api.getNotices().catch(() => ({ data: [] })),
           api.getResults().catch(() => ({ data: [] })),
           api.getAssignments().catch(() => ({ data: [] })),
-          api.getMaterials().catch(() => ({ data: [] }))
+          api.getMaterials().catch(() => ({ data: [] })),
+          api.getMyAssignedSubjects().catch(() => ({ data: [] }))
         ]);
 
         if (myProfRes?.data) setMyProfile(myProfRes.data);
@@ -225,6 +233,7 @@ export const FacultyDashboard = () => {
         if (resRes?.data) setResults(Array.isArray(resRes.data) ? resRes.data : []);
         if (assignRes?.data) setAssignments(Array.isArray(assignRes.data) ? assignRes.data : []);
         if (matRes?.data) setMaterials(Array.isArray(matRes.data) ? matRes.data : []);
+        if (myAssignedRes?.data) setDbAssignedSubjects(Array.isArray(myAssignedRes.data) ? myAssignedRes.data : []);
       } else {
         const [facRes, subjRes, timeRes, deptRes, usersRes] = await Promise.all([
           api.getFaculty({
@@ -662,29 +671,68 @@ export const FacultyDashboard = () => {
       return false;
     });
 
-    // Derive unique curriculum subjects allocated to faculty
-    const assignedSubjectsMap = new Map();
-    mySlots.forEach((slot) => {
-      const sub = slot.subject;
-      if (!sub) return;
-      const subId = sub._id || sub.id || (typeof sub === 'string' ? sub : null);
-      if (!subId) return;
-      const key = String(subId);
-      if (!assignedSubjectsMap.has(key)) {
-        const fullSub = typeof sub === 'object' && sub.name
-          ? sub
-          : subjects.find((s) => String(s._id || s.id) === key) || { _id: subId, name: 'Allocated Subject', code: 'SUB' };
-        assignedSubjectsMap.set(key, {
-          ...fullSub,
-          semester: slot.semester || fullSub.semester,
-          course: slot.course || fullSub.course,
-          section: slot.section || 'A',
-          department: slot.department || fullSub.department,
-          roomNumber: slot.roomNumber
-        });
+    // Derive unique curriculum subjects allocated to faculty (Authoritative DB Source + Robust Multi-Room Fallback)
+    let assignedSubjects = [];
+    if (dbAssignedSubjects && dbAssignedSubjects.length > 0) {
+      assignedSubjects = dbAssignedSubjects;
+    } else {
+      const assignedSubjectsMap = new Map();
+      mySlots.forEach((slot) => {
+        const sub = slot.subject;
+        if (!sub) return;
+        const subId = sub._id || sub.id || (typeof sub === 'string' ? sub : null);
+        if (!subId) return;
+        const key = String(subId);
+        if (!assignedSubjectsMap.has(key)) {
+          const fullSub = typeof sub === 'object' && sub.name
+            ? sub
+            : subjects.find((s) => String(s._id || s.id) === key) || { _id: subId, name: 'Allocated Subject', code: 'SUB' };
+          assignedSubjectsMap.set(key, {
+            ...fullSub,
+            semester: slot.semester || fullSub.semester,
+            course: slot.course || fullSub.course,
+            sections: new Set([slot.section || 'A']),
+            rooms: new Set(slot.roomNumber ? [slot.roomNumber] : []),
+            department: slot.department || fullSub.department,
+            weeklyLecturesCount: 1,
+            slots: [slot]
+          });
+        } else {
+          const entry = assignedSubjectsMap.get(key);
+          if (slot.section) entry.sections.add(slot.section);
+          if (slot.roomNumber) entry.rooms.add(slot.roomNumber);
+          entry.weeklyLecturesCount += 1;
+          entry.slots.push(slot);
+        }
+      });
+      assignedSubjects = Array.from(assignedSubjectsMap.values()).map((entry) => ({
+        ...entry,
+        sections: Array.from(entry.sections),
+        section: Array.from(entry.sections).join(', '),
+        rooms: Array.from(entry.rooms),
+        roomNumber: Array.from(entry.rooms).join(', ') || 'LH-101',
+        academicYear: '2025-26',
+        syllabusCompletion: 0
+      }));
+    }
+
+    // Filtered assigned subjects for My Subjects section (Search & Semester Filter)
+    const filteredMySubjects = assignedSubjects.filter((sub) => {
+      if (subjectSemesterFilter !== 'all' && Number(sub.semester) !== Number(subjectSemesterFilter)) {
+        return false;
       }
+      if (subjectSearch.trim()) {
+        const q = subjectSearch.toLowerCase().trim();
+        const code = (sub.code || '').toLowerCase();
+        const name = (sub.name || '').toLowerCase();
+        const room = (sub.roomNumber || '').toLowerCase();
+        const sec = (sub.section || '').toLowerCase();
+        if (!code.includes(q) && !name.includes(q) && !room.includes(q) && !sec.includes(q)) {
+          return false;
+        }
+      }
+      return true;
     });
-    const assignedSubjects = Array.from(assignedSubjectsMap.values());
 
     // Helper: Enrolled students for a given subject
     const getStudentsForSubject = (subjectId) => {
@@ -1213,49 +1261,141 @@ export const FacultyDashboard = () => {
 
         {/* Row 3: My Subjects & Recent Activities */}
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-          <div className="lg:col-span-6 bg-white rounded-2xl p-5 border border-slate-200/80 shadow-subtle">
-            <div className="flex items-center justify-between mb-4">
-              <h2 className="text-sm sm:text-base font-bold text-slate-900">My Subjects</h2>
-              <button
-                onClick={() => handleTabChange('courses')}
-                className="text-xs font-semibold text-purple-600 hover:text-purple-700 cursor-pointer"
-              >
-                View All Courses &rarr;
-              </button>
-            </div>
-
-            {assignedSubjects.length === 0 ? (
-              <div className="py-8 text-center text-slate-500">
-                <BookOpen className="w-8 h-8 text-slate-300 mx-auto mb-2" />
-                <p className="text-xs font-medium text-slate-600">No teaching allocations assigned to your profile.</p>
+          <div className="lg:col-span-6 bg-white rounded-2xl p-5 border border-slate-200/80 shadow-subtle flex flex-col justify-between">
+            <div>
+              <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
+                <div className="flex items-center space-x-2">
+                  <h2 className="text-sm sm:text-base font-bold text-slate-900">My Subjects</h2>
+                  <Badge variant="purple" size="xs">
+                    {assignedSubjects.length} Assigned
+                  </Badge>
+                </div>
+                <div className="flex items-center space-x-2">
+                  <span className="text-[11px] font-medium text-purple-700 bg-purple-50 px-2 py-0.5 rounded-md border border-purple-100">
+                    AY {subjectYearFilter}
+                  </span>
+                  <button
+                    onClick={() => handleTabChange('courses')}
+                    className="text-xs font-semibold text-purple-600 hover:text-purple-700 cursor-pointer"
+                  >
+                    View All &rarr;
+                  </button>
+                </div>
               </div>
-            ) : (
-              <div className="space-y-3">
-                {assignedSubjects.map((sub) => {
-                  const studentCount = getStudentsForSubject(sub._id || sub.id).length;
-                  return (
-                    <div key={sub._id || sub.id} className="flex items-center justify-between p-3 rounded-xl hover:bg-slate-50 transition-colors border border-slate-100">
-                      <div className="flex items-center space-x-3">
-                        <div className="w-8 h-8 rounded-full bg-purple-50 text-purple-600 flex items-center justify-center flex-shrink-0">
-                          <BookOpen className="w-4 h-4 text-purple-600" />
+
+              {/* Filter and Search Bar for Assigned Subjects */}
+              <div className="flex items-center gap-2 mb-3">
+                <div className="relative flex-1">
+                  <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
+                  <input
+                    type="text"
+                    placeholder="Search by code or title..."
+                    value={subjectSearch}
+                    onChange={(e) => setSubjectSearch(e.target.value)}
+                    className="w-full pl-8 pr-7 py-1 text-xs rounded-lg border border-slate-200 focus:outline-none focus:ring-1 focus:ring-purple-500 bg-slate-50/50"
+                  />
+                  {subjectSearch && (
+                    <button
+                      onClick={() => setSubjectSearch('')}
+                      className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 cursor-pointer"
+                    >
+                      <X className="w-3 h-3" />
+                    </button>
+                  )}
+                </div>
+
+                <select
+                  value={subjectSemesterFilter}
+                  onChange={(e) => setSubjectSemesterFilter(e.target.value)}
+                  className="text-xs px-2 py-1 rounded-lg border border-slate-200 bg-slate-50/50 text-slate-700 focus:outline-none focus:ring-1 focus:ring-purple-500 cursor-pointer"
+                >
+                  <option value="all">All Semesters</option>
+                  {[1, 2, 3, 4, 5, 6, 7, 8].map((s) => (
+                    <option key={s} value={s}>Semester {s}</option>
+                  ))}
+                </select>
+              </div>
+
+              {filteredMySubjects.length === 0 ? (
+                <div className="py-8 text-center text-slate-500">
+                  <BookOpen className="w-8 h-8 text-slate-300 mx-auto mb-2" />
+                  <p className="text-xs font-medium text-slate-600">
+                    {assignedSubjects.length === 0
+                      ? 'No teaching allocations assigned to your profile.'
+                      : 'No subjects match your filter criteria.'}
+                  </p>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {filteredMySubjects.map((sub) => {
+                    const studentCount = sub.enrolledCount !== undefined
+                      ? sub.enrolledCount
+                      : getStudentsForSubject(sub._id || sub.id).length;
+                    const completion = sub.syllabusCompletion || 0;
+
+                    return (
+                      <div
+                        key={sub._id || sub.id}
+                        onClick={() => {
+                          setSelectedDetailSubject(sub);
+                          setIsSubjectDetailsOpen(true);
+                        }}
+                        className="p-3.5 rounded-xl hover:bg-purple-50/40 transition-all border border-slate-200/90 hover:border-purple-300 shadow-xs cursor-pointer group"
+                      >
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="flex items-start space-x-3">
+                            <div className="w-9 h-9 rounded-xl bg-purple-100 text-purple-700 flex items-center justify-center flex-shrink-0 font-mono font-bold text-xs mt-0.5 group-hover:scale-105 transition-transform">
+                              {sub.code?.slice(0, 5) || 'SUB'}
+                            </div>
+                            <div>
+                              <div className="flex items-center space-x-1.5 flex-wrap">
+                                <span className="text-xs sm:text-sm font-bold text-slate-900 group-hover:text-purple-900 transition-colors">
+                                  {sub.code} - {sub.name}
+                                </span>
+                              </div>
+                              <span className="text-[11px] text-slate-500 block mt-0.5">
+                                Semester {sub.semester} &bull; {sub.credits} Credits &bull; Section {sub.section || 'A'} &bull; Room {sub.roomNumber || 'LH-101'}
+                              </span>
+                            </div>
+                          </div>
+
+                          <Button
+                            variant="secondary"
+                            size="xs"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setSelectedDetailSubject(sub);
+                              setIsSubjectDetailsOpen(true);
+                            }}
+                            className="group-hover:border-purple-300 group-hover:text-purple-700 whitespace-nowrap"
+                          >
+                            View Details &rarr;
+                          </Button>
                         </div>
-                        <div>
-                          <span className="text-xs sm:text-sm font-semibold text-slate-900 block">
-                            {sub.code} - {sub.name}
-                          </span>
-                          <span className="text-[11px] text-slate-400">
-                            Semester {sub.semester} &bull; {sub.credits} Credits &bull; Room {sub.roomNumber || 'LH-101'}
-                          </span>
+
+                        {/* Progress Bar & Enrolled Count */}
+                        <div className="mt-2.5 pt-2 border-t border-slate-100 flex items-center justify-between gap-3 text-xs">
+                          <div className="flex-1 flex items-center space-x-2">
+                            <span className="text-[10px] text-slate-400 whitespace-nowrap">Syllabus:</span>
+                            <div className="w-20 sm:w-28 h-1.5 bg-slate-100 rounded-full overflow-hidden">
+                              <div
+                                className="h-full bg-gradient-to-r from-purple-500 to-indigo-600 rounded-full"
+                                style={{ width: `${completion}%` }}
+                              />
+                            </div>
+                            <span className="text-[10px] font-semibold text-purple-700">{completion}%</span>
+                          </div>
+
+                          <Badge variant="purple" size="xs">
+                            {studentCount} Enrolled
+                          </Badge>
                         </div>
                       </div>
-                      <Badge variant="purple" size="xs">
-                        {studentCount} Students
-                      </Badge>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
+                    );
+                  })}
+                </div>
+              )}
+            </div>
           </div>
 
           <div className="lg:col-span-6 bg-white rounded-2xl p-5 border border-slate-200/80 shadow-subtle">
@@ -1432,6 +1572,10 @@ export const FacultyDashboard = () => {
             assignedSubjects={assignedSubjects}
             materials={materials}
             onRefreshMaterials={handleRefreshMaterials}
+            onOpenSubjectDetails={(sub) => {
+              setSelectedDetailSubject(sub);
+              setIsSubjectDetailsOpen(true);
+            }}
             onAddToast={addToast}
           />
         )}
@@ -1924,6 +2068,19 @@ export const FacultyDashboard = () => {
           user={user}
           assignedSubjects={assignedSubjects}
           timetableSlots={mySlots}
+        />
+
+        {/* Subject Details Drawer / Modal */}
+        <SubjectDetailsModal
+          isOpen={isSubjectDetailsOpen}
+          onClose={() => setIsSubjectDetailsOpen(false)}
+          subject={selectedDetailSubject}
+          onNavigateToAttendance={(subId) => {
+            setAttendanceSubjectId(subId);
+            setIsMarkAttendanceOpen(true);
+          }}
+          onRefreshAssignedSubjects={loadData}
+          onAddToast={addToast}
         />
       </div>
     );

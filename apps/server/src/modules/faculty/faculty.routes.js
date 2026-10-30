@@ -4,6 +4,8 @@ const {
   getFacultyById,
   getMyFacultyProfile,
   getMyFacultyActivities,
+  getMyAssignedSubjects,
+  getAssignedSubjectStudents,
   createFacultyProfile,
   updateFacultyProfile
 } = require('./faculty.controller');
@@ -19,6 +21,8 @@ router.use(authenticate);
 
 router.get('/me', authorizeRoles(ROLES.FACULTY, ROLES.HOD), getMyFacultyProfile);
 router.get('/me/activities', authorizeRoles(ROLES.FACULTY, ROLES.HOD), getMyFacultyActivities);
+router.get('/me/assigned-subjects', authorizeRoles(ROLES.FACULTY, ROLES.HOD), getMyAssignedSubjects);
+router.get('/me/assigned-subjects/:subjectId/students', authorizeRoles(ROLES.FACULTY, ROLES.HOD, ROLES.SUPER_ADMIN, ROLES.PRINCIPAL), getAssignedSubjectStudents);
 router.get('/', listFaculty);
 router.get('/:id', getFacultyById);
 
