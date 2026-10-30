@@ -945,6 +945,56 @@ class ApiClient {
   updateUnitProgressLegacy(subjectId, unitNumber, data) {
     return this.patch(`/v1/syllabus/subject/${subjectId}/unit/${unitNumber}`, data);
   }
+
+  // Phase 6: Academic Calendar & Personal Events
+  getFacultyCalendarEvents(params = {}) {
+    const searchParams = new URLSearchParams();
+    if (params.startDate) searchParams.append('startDate', params.startDate);
+    if (params.endDate) searchParams.append('endDate', params.endDate);
+    if (params.category && params.category !== 'all') searchParams.append('category', params.category);
+    if (params.search) searchParams.append('search', params.search);
+    const qs = searchParams.toString();
+    return this.get(`/v1/faculty/me/calendar/events${qs ? `?${qs}` : ''}`);
+  }
+
+  createFacultyPersonalEvent(data) {
+    return this.post('/v1/faculty/me/calendar/events', data);
+  }
+
+  getFacultyPersonalEvent(eventId) {
+    return this.get(`/v1/faculty/me/calendar/events/${eventId}`);
+  }
+
+  updateFacultyPersonalEvent(eventId, data) {
+    return this.patch(`/v1/faculty/me/calendar/events/${eventId}`, data);
+  }
+
+  deleteFacultyPersonalEvent(eventId) {
+    return this.delete(`/v1/faculty/me/calendar/events/${eventId}`);
+  }
+
+  // Phase 6: Faculty Notifications & Reminders
+  getFacultyNotifications(params = {}) {
+    const searchParams = new URLSearchParams();
+    if (params.unreadOnly) searchParams.append('unreadOnly', params.unreadOnly);
+    if (params.category) searchParams.append('category', params.category);
+    if (params.limit) searchParams.append('limit', params.limit);
+    if (params.page) searchParams.append('page', params.page);
+    const qs = searchParams.toString();
+    return this.get(`/v1/faculty/me/notifications${qs ? `?${qs}` : ''}`);
+  }
+
+  getFacultyUnreadNotificationCount() {
+    return this.get('/v1/faculty/me/notifications/unread-count');
+  }
+
+  markFacultyNotificationAsRead(notificationId) {
+    return this.patch(`/v1/faculty/me/notifications/${notificationId}/read`);
+  }
+
+  markAllFacultyNotificationsAsRead() {
+    return this.patch('/v1/faculty/me/notifications/read-all');
+  }
 }
 
 export const api = new ApiClient(API_BASE_URL);

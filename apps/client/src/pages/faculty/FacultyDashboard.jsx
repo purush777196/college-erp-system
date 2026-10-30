@@ -67,6 +67,7 @@ import StudentPerformanceAnalyticsSection from './components/StudentPerformanceA
 import SmartSyllabusTrackerSection from './components/SmartSyllabusTrackerSection';
 import LearningResourceLibrarySection from './components/LearningResourceLibrarySection';
 import StudentAppointmentSection from './components/StudentAppointmentSection';
+import AcademicCalendarSection from './components/AcademicCalendarSection';
 import FacultyProfileModal from './components/FacultyProfileModal';
 import FacultyNotificationsCenter from './components/FacultyNotificationsCenter';
 import SubjectDetailsModal from './components/SubjectDetailsModal';
@@ -126,7 +127,7 @@ function getActivityDisplay(act) {
   };
 }
 
-const VALID_FACULTY_TABS = ['timetable', 'courses', 'roster', 'exams', 'pending', 'assignments', 'analytics', 'syllabus', 'resources', 'appointments'];
+const VALID_FACULTY_TABS = ['timetable', 'courses', 'roster', 'exams', 'pending', 'assignments', 'analytics', 'syllabus', 'resources', 'appointments', 'calendar'];
 
 export const FacultyDashboard = () => {
   const { user } = useAuth();
@@ -1696,6 +1697,18 @@ export const FacultyDashboard = () => {
             <CalendarDays className="w-4 h-4" />
             <span>Appointments</span>
           </button>
+
+          <button
+            onClick={() => handleTabChange('calendar')}
+            className={`py-3.5 px-4 text-xs font-bold uppercase tracking-wider border-b-2 transition-colors flex items-center space-x-2 whitespace-nowrap cursor-pointer ${
+              facultyActiveTab === 'calendar'
+                ? 'border-purple-600 text-purple-800'
+                : 'border-transparent text-navy-500 hover:text-navy-900'
+            }`}
+          >
+            <Calendar className="w-4 h-4" />
+            <span>Academic Calendar</span>
+          </button>
         </div>
 
         {/* TAB 1: Weekly Timetable */}
@@ -2044,6 +2057,14 @@ export const FacultyDashboard = () => {
           <StudentAppointmentSection
             assignedSubjects={assignedSubjects}
             onAddToast={addToast}
+          />
+        )}
+
+        {/* TAB 10: Academic Calendar & Reminders (Phase 6) */}
+        {facultyActiveTab === 'calendar' && (
+          <AcademicCalendarSection
+            onAddToast={addToast}
+            onNavigateTab={handleTabChange}
           />
         )}
 
