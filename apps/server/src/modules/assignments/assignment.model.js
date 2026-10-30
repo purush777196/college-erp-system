@@ -75,6 +75,11 @@ const assignmentSchema = new mongoose.Schema(
       trim: true,
       default: ''
     },
+    instructionsUrl: {
+      type: String,
+      trim: true,
+      default: ''
+    },
     attachments: [attachmentSchema]
   },
   { timestamps: true }

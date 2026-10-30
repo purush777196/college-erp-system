@@ -17,6 +17,7 @@ const noticeRoutes = require('../modules/notices/notice.routes');
 const assignmentRoutes = require('../modules/assignments/assignment.routes');
 const syllabusRoutes = require('../modules/syllabus/syllabus.routes');
 const materialRoutes = require('../modules/materials/material.routes');
+const { facultyRouter: facultyAppointmentRoutes, studentRouter: studentAppointmentRoutes } = require('../modules/appointments/appointment.routes');
 const reportRoutes = require('../modules/reports/report.routes');
 const auditRoutes = require('../modules/audit-logs/audit.routes');
 const { getAttendanceOverview, getDepartmentSummaries, getExaminationsReport } = require('../modules/reports/report.controller');
@@ -62,6 +63,8 @@ v1Router.use('/notices', noticeRoutes);
 v1Router.use('/assignments', assignmentRoutes);
 v1Router.use('/syllabus', syllabusRoutes);
 v1Router.use('/materials', materialRoutes);
+v1Router.use('/faculty/me/appointments', facultyAppointmentRoutes);
+v1Router.use('/student/appointments', studentAppointmentRoutes);
 v1Router.use('/reports', reportRoutes);
 v1Router.use('/audit-logs', auditRoutes);
 

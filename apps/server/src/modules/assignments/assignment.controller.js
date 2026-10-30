@@ -179,6 +179,7 @@ async function createAssignment(req, res, next) {
       publishDate,
       dueDate: new Date(dueDate),
       instructions: instructions.trim(),
+      instructionsUrl: (req.body.instructionsUrl || '').trim(),
       attachments
     });
 
@@ -247,6 +248,8 @@ async function updateAssignment(req, res, next) {
     if (section !== undefined) assignment.section = section;
     if (maxMarks !== undefined) assignment.maxMarks = Number(maxMarks);
     if (instructions !== undefined) assignment.instructions = instructions.trim();
+    if (req.body.instructionsUrl !== undefined) assignment.instructionsUrl = req.body.instructionsUrl.trim();
+    if (req.body.publishDate !== undefined) assignment.publishDate = req.body.publishDate ? new Date(req.body.publishDate) : null;
     if (dueDate !== undefined) assignment.dueDate = new Date(dueDate);
     if (attachments !== undefined) assignment.attachments = attachments;
 

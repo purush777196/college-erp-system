@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import {
   CalendarCheck,
@@ -37,6 +37,8 @@ import {
   Trash2,
   Eye,
   BarChart2,
+  FolderKanban,
+  CalendarDays,
   User
 } from 'lucide-react';
 import Card from '../../components/common/Card';
@@ -58,11 +60,23 @@ import { ROLES, USER_STATUS, DEPARTMENTS } from '@college-erp/shared';
 import { exportToCsv } from '../../utils/csvExport';
 
 import AssignmentsSection from './components/AssignmentsSection';
+import AssignedCoursesSection from './components/AssignedCoursesSection';
 import SyllabusMaterialsSection from './components/SyllabusMaterialsSection';
 import AttendanceAnalyticsSection from './components/AttendanceAnalyticsSection';
+import StudentPerformanceAnalyticsSection from './components/StudentPerformanceAnalyticsSection';
+import SmartSyllabusTrackerSection from './components/SmartSyllabusTrackerSection';
+import LearningResourceLibrarySection from './components/LearningResourceLibrarySection';
+import StudentAppointmentSection from './components/StudentAppointmentSection';
 import FacultyProfileModal from './components/FacultyProfileModal';
 import FacultyNotificationsCenter from './components/FacultyNotificationsCenter';
 import SubjectDetailsModal from './components/SubjectDetailsModal';
+import FacultyKpiCard from './components/FacultyKpiCard';
+import TeachingScheduleSection from './components/TeachingScheduleSection';
+import PendingTasksSection from './components/PendingTasksSection';
+import AssignedSubjectsModal from './components/AssignedSubjectsModal';
+import WeeklyScheduleModal from './components/WeeklyScheduleModal';
+import StudentsUnderMySubjectsModal from './components/StudentsUnderMySubjectsModal';
+import PendingTasksModal from './components/PendingTasksModal';
 
 function formatRelativeTime(dateString) {
   if (!dateString) return 'Recently';
@@ -112,7 +126,7 @@ function getActivityDisplay(act) {
   };
 }
 
-const VALID_FACULTY_TABS = ['timetable', 'courses', 'roster', 'exams', 'assignments', 'analytics'];
+const VALID_FACULTY_TABS = ['timetable', 'courses', 'roster', 'exams', 'pending', 'assignments', 'analytics', 'syllabus', 'resources', 'appointments'];
 
 export const FacultyDashboard = () => {
   const { user } = useAuth();
@@ -141,9 +155,32 @@ export const FacultyDashboard = () => {
   const [isProfileModalOpen, setIsProfileModalOpen] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
 
+  // Detail Modal States for the 4 KPI Cards (Popups directly on same dashboard)
+  const [isAssignedSubjectsModalOpen, setIsAssignedSubjectsModalOpen] = useState(false);
+  const [isWeeklyScheduleModalOpen, setIsWeeklyScheduleModalOpen] = useState(false);
+  const [isStudentsModalOpen, setIsStudentsModalOpen] = useState(false);
+  const [isPendingTasksModalOpen, setIsPendingTasksModalOpen] = useState(false);
+
   const [searchParams, setSearchParams] = useSearchParams();
   const queryTab = searchParams.get('tab');
   const facultyActiveTab = VALID_FACULTY_TABS.includes(queryTab) ? queryTab : 'timetable';
+  const [subjectDetailsInitialTab, setSubjectDetailsInitialTab] = useState('overview');
+  const tabsContainerRef = useRef(null);
+
+  // Auto-scroll into view when navigated via query param (e.g. /faculty?tab=courses)
+  useEffect(() => {
+    if (queryTab && tabsContainerRef.current) {
+      const scrollTab = () => {
+        if (!tabsContainerRef.current) return;
+        const yOffset = -24;
+        const y = tabsContainerRef.current.getBoundingClientRect().top + window.pageYOffset + yOffset;
+        window.scrollTo({ top: Math.max(0, y), behavior: 'smooth' });
+      };
+      scrollTab();
+      const timer = setTimeout(scrollTab, 150);
+      return () => clearTimeout(timer);
+    }
+  }, [queryTab]);
 
   const handleTabChange = useCallback((newTab) => {
     if (VALID_FACULTY_TABS.includes(newTab)) {
@@ -641,6 +678,7 @@ export const FacultyDashboard = () => {
   // Roster tab filters & pagination
   const [rosterSubjectFilter, setRosterSubjectFilter] = useState('all');
   const [rosterSemesterFilter, setRosterSemesterFilter] = useState('all');
+  const [rosterSectionFilter, setRosterSectionFilter] = useState('all');
   const [rosterSearch, setRosterSearch] = useState('');
   const [rosterPage, setRosterPage] = useState(1);
   const ROSTER_PAGE_SIZE = 10;
@@ -752,19 +790,9 @@ export const FacultyDashboard = () => {
       });
     };
 
-    // All unique students enrolled across assigned subjects
+    // All unique students enrolled across assigned subjects (de-duplicated, exactly 0 if no assigned subjects)
     const assignedStudentsMap = new Map();
-    if (assignedSubjects.length === 0) {
-      const myDeptId = facultyUser?.department?._id || facultyUser?.department?.id || facultyUser?.department;
-      if (myDeptId) {
-        students.forEach((st) => {
-          const stDeptId = st.department?._id || st.department?.id || st.department;
-          if (stDeptId && (String(stDeptId) === String(myDeptId) || st.department?.name === myDeptName)) {
-            assignedStudentsMap.set(String(st._id || st.id), st);
-          }
-        });
-      }
-    } else {
+    if (assignedSubjects.length > 0) {
       assignedSubjects.forEach((sub) => {
         const list = getStudentsForSubject(sub._id || sub.id);
         list.forEach((st) => {
@@ -806,9 +834,11 @@ export const FacultyDashboard = () => {
       { label: 'Late', value: lateCount, color: '#f59e0b' }
     ] : [];
 
-    // Pending tasks calculation
-    let pendingCount = 0;
+    // Comprehensive Actionable Pending Tasks Construction
+    const pendingTasks = [];
     const todayStr = new Date().toISOString().split('T')[0];
+
+    // 1. Pending Attendance Tasks
     todaySlots.forEach((slot) => {
       const subId = slot.subject?._id || slot.subject?.id || slot.subject;
       const isMarked = attendanceRecords.some((r) => {
@@ -816,16 +846,99 @@ export const FacultyDashboard = () => {
         const rDateStr = r.date ? new Date(r.date).toISOString().split('T')[0] : '';
         return String(rSubId) === String(subId) && rDateStr === todayStr && Number(r.periodNumber) === Number(slot.periodNumber);
       });
-      if (!isMarked) pendingCount++;
-    });
-    exams.forEach((ex) => {
-      if (!ex.isPublished) pendingCount++;
+      if (!isMarked) {
+        pendingTasks.push({
+          id: `att-${slot._id || slot.id || slot.periodNumber}`,
+          category: 'attendance',
+          title: `Mark Attendance for Period ${slot.periodNumber}`,
+          subject: slot.subject?.name || slot.subject?.code || 'Scheduled Lecture',
+          subjectId: subId,
+          section: slot.section || 'A',
+          roomNumber: slot.roomNumber || 'LH-101',
+          periodNumber: slot.periodNumber,
+          date: todayStr,
+          time: `${slot.startTime} - ${slot.endTime}`,
+          priority: 'High',
+          status: 'Unmarked Session',
+          actionLabel: 'Mark Attendance',
+          onAction: () => {
+            setAttendanceSubjectId(subId);
+            setAttendancePeriod(String(slot.periodNumber || 1));
+            handleOpenAttendanceModal(subId, slot.periodNumber);
+          }
+        });
+      }
     });
 
+    // 2. Pending Examination Marks Tasks
+    exams.forEach((ex) => {
+      assignedSubjects.forEach((sub) => {
+        const subId = sub._id || sub.id;
+        const recorded = results.filter((r) => {
+          const rExamId = r.examination?._id || r.examination?.id || r.examination;
+          const rSubId = r.subject?._id || r.subject?.id || r.subject;
+          return String(rExamId) === String(ex._id || ex.id) && String(rSubId) === String(subId);
+        });
+        const totalRequired = sub.enrolledCount !== undefined ? sub.enrolledCount : 2;
+        if (recorded.length < totalRequired) {
+          pendingTasks.push({
+            id: `exam-${ex._id || ex.id}-${subId}`,
+            category: 'examination',
+            title: `Enter Marks: ${ex.name} — ${sub.code}`,
+            subject: `${sub.code} - ${sub.name}`,
+            subjectId: subId,
+            examId: ex._id || ex.id,
+            examName: ex.name,
+            section: sub.section || 'A',
+            date: ex.startDate ? new Date(ex.startDate).toLocaleDateString() : 'Active Exam',
+            priority: 'Medium',
+            status: 'Pending Evaluation',
+            pendingStudentsCount: Math.max(0, totalRequired - recorded.length),
+            actionLabel: 'Enter Marks',
+            onAction: () => {
+              setSelectedExamId(ex._id || ex.id);
+              setSelectedExamSubjectId(subId);
+              handleOpenMarksModal(ex._id || ex.id, subId);
+            }
+          });
+        }
+      });
+    });
+
+    // 3. Pending Assignment Evaluations Tasks
+    assignments.forEach((asgn) => {
+      const subId = asgn.subject?._id || asgn.subject?.id || asgn.subject;
+      const isMySubject = assignedSubjects.some((s) => String(s._id || s.id) === String(subId));
+      if (isMySubject) {
+        const subs = asgn.submissions || [];
+        const pendingSubmissions = subs.filter(
+          (s) => s.status === 'submitted' && (s.marksObtained === undefined || s.marksObtained === null)
+        );
+        if (pendingSubmissions.length > 0) {
+          pendingTasks.push({
+            id: `asgn-${asgn._id || asgn.id}`,
+            category: 'assignment',
+            title: `Evaluate Submissions: ${asgn.title}`,
+            subject: asgn.subject?.name || asgn.subject?.code || 'Course Assignment',
+            subjectId: subId,
+            assignmentId: asgn._id || asgn.id,
+            date: asgn.dueDate ? new Date(asgn.dueDate).toLocaleDateString() : 'Due Soon',
+            priority: 'Normal',
+            status: `${pendingSubmissions.length} Pending Submission${pendingSubmissions.length === 1 ? '' : 's'}`,
+            actionLabel: 'Evaluate Submissions',
+            onAction: () => handleTabChange('assignments')
+          });
+        }
+      }
+    });
+
+    const pendingCount = pendingTasks.length;
+
     // Attendance Modal helpers
-    const handleOpenAttendanceModal = () => {
-      const subId = attendanceSubjectId || (assignedSubjects[0] ? (assignedSubjects[0]._id || assignedSubjects[0].id) : '');
+    const handleOpenAttendanceModal = (overrideSubId, overridePeriod) => {
+      const subId = overrideSubId || attendanceSubjectId || (assignedSubjects[0] ? (assignedSubjects[0]._id || assignedSubjects[0].id) : '');
       setAttendanceSubjectId(subId);
+      if (overridePeriod) setAttendancePeriod(String(overridePeriod));
       const studs = getStudentsForSubject(subId);
       setStudentRoster(studs.map((s) => ({
         studentId: s._id || s.id,
@@ -906,6 +1019,10 @@ export const FacultyDashboard = () => {
       if (rosterSemesterFilter !== 'all' && Number(st.currentSemester) !== Number(rosterSemesterFilter)) {
         return false;
       }
+      if (rosterSectionFilter !== 'all') {
+        const sec = st.section || 'A';
+        if (sec.toLowerCase() !== rosterSectionFilter.toLowerCase()) return false;
+      }
       if (rosterSubjectFilter !== 'all') {
         const subjectStudents = getStudentsForSubject(rosterSubjectFilter);
         const isEnrolled = subjectStudents.some((s) => (s._id || s.id) === (st._id || st.id));
@@ -972,8 +1089,13 @@ export const FacultyDashboard = () => {
       return true;
     });
 
-    const handleOpenMarksModal = () => {
-      if (!effectiveExamId || !effectiveExamSubjectId) {
+    const handleOpenMarksModal = (overrideExamId, overrideSubjectId) => {
+      const examId = overrideExamId || effectiveExamId;
+      const subId = overrideSubjectId || effectiveExamSubjectId;
+      if (overrideExamId) setSelectedExamId(overrideExamId);
+      if (overrideSubjectId) setSelectedExamSubjectId(overrideSubjectId);
+
+      if (!examId || !subId) {
         addToast({
           type: 'warning',
           title: 'Select Exam & Subject',
@@ -981,14 +1103,14 @@ export const FacultyDashboard = () => {
         });
         return;
       }
-      const studs = getStudentsForSubject(effectiveExamSubjectId);
+      const studs = getStudentsForSubject(subId);
       const roster = studs.map((st) => {
         const stId = st._id || st.id;
         const existing = results.find((r) => {
           const rStId = r.student?._id || r.student?.id || r.student;
           const rSubId = r.subject?._id || r.subject?.id || r.subject;
           const rExId = r.examination?._id || r.examination?.id || r.examination;
-          return String(rStId) === String(stId) && String(rSubId) === String(effectiveExamSubjectId) && String(rExId) === String(effectiveExamId);
+          return String(rStId) === String(stId) && String(rSubId) === String(subId) && String(rExId) === String(examId);
         });
 
         return {
@@ -1128,35 +1250,39 @@ export const FacultyDashboard = () => {
           </div>
         </div>
 
-        {/* Real KPI Cards */}
+        {/* Real KPI Cards - Direct Popup Modals on Same Dashboard (No URL or Tab Navigation) */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-          <StatWidget
+          <FacultyKpiCard
             title="Assigned Subjects"
             value={assignedSubjects.length}
             subtitle={`${assignedSubjects.length} Active Allocations`}
             icon={BookOpen}
-            color="purple"
+            onClick={() => setIsAssignedSubjectsModalOpen(true)}
+            ariaLabel={`Assigned Subjects: ${assignedSubjects.length} active allocations. Click to open Assigned Subjects details modal.`}
           />
-          <StatWidget
+          <FacultyKpiCard
             title="Classes This Week"
             value={mySlots.length}
             subtitle={`${todaySlots.length} Scheduled Today`}
             icon={Clock}
-            color="purple"
+            onClick={() => setIsWeeklyScheduleModalOpen(true)}
+            ariaLabel={`Classes This Week: ${mySlots.length} weekly lecture periods. Click to open Weekly Teaching Schedule modal.`}
           />
-          <StatWidget
+          <FacultyKpiCard
             title="Total Students"
             value={assignedStudents.length}
             subtitle="Enrolled Across Classes"
             icon={Users}
-            color="purple"
+            onClick={() => setIsStudentsModalOpen(true)}
+            ariaLabel={`Total Students: ${assignedStudents.length} unique enrolled students. Click to open Students Under My Subjects modal.`}
           />
-          <StatWidget
+          <FacultyKpiCard
             title="Pending Tasks"
             value={pendingCount}
-            subtitle="Unmarked Sessions & Exams"
+            subtitle={pendingCount === 0 ? "You're all caught up!" : `${pendingCount} Tasks Awaiting Action`}
             icon={AlertTriangle}
-            color="purple"
+            onClick={() => setIsPendingTasksModalOpen(true)}
+            ariaLabel={`Pending Tasks: ${pendingCount} actionable tasks awaiting your completion. Click to open Pending Academic Tasks modal.`}
           />
         </div>
 
@@ -1450,7 +1576,7 @@ export const FacultyDashboard = () => {
         />
 
         {/* Navigation Tabs (URL Synchronized) */}
-        <div className="flex border-b border-navy-200 bg-white px-4 rounded-xl shadow-subtle overflow-x-auto">
+        <div ref={tabsContainerRef} id="faculty-tabs-container" className="flex border-b border-navy-200 bg-white px-4 rounded-xl shadow-subtle overflow-x-auto scroll-mt-6">
           <button
             onClick={() => handleTabChange('timetable')}
             className={`py-3.5 px-4 text-xs font-bold uppercase tracking-wider border-b-2 transition-colors flex items-center space-x-2 whitespace-nowrap cursor-pointer ${
@@ -1472,19 +1598,7 @@ export const FacultyDashboard = () => {
             }`}
           >
             <BookOpen className="w-4 h-4" />
-            <span>Assigned Courses & Syllabus ({assignedSubjects.length})</span>
-          </button>
-
-          <button
-            onClick={() => handleTabChange('assignments')}
-            className={`py-3.5 px-4 text-xs font-bold uppercase tracking-wider border-b-2 transition-colors flex items-center space-x-2 whitespace-nowrap cursor-pointer ${
-              facultyActiveTab === 'assignments'
-                ? 'border-purple-600 text-purple-800'
-                : 'border-transparent text-navy-500 hover:text-navy-900'
-            }`}
-          >
-            <FileText className="w-4 h-4" />
-            <span>Assignments & Submissions ({assignments.length})</span>
+            <span>Assigned Courses ({assignedSubjects.length})</span>
           </button>
 
           <button
@@ -1500,6 +1614,18 @@ export const FacultyDashboard = () => {
           </button>
 
           <button
+            onClick={() => handleTabChange('pending')}
+            className={`py-3.5 px-4 text-xs font-bold uppercase tracking-wider border-b-2 transition-colors flex items-center space-x-2 whitespace-nowrap cursor-pointer ${
+              facultyActiveTab === 'pending'
+                ? 'border-purple-600 text-purple-800'
+                : 'border-transparent text-navy-500 hover:text-navy-900'
+            }`}
+          >
+            <AlertTriangle className="w-4 h-4 text-amber-500" />
+            <span>Pending Tasks ({pendingTasks.length})</span>
+          </button>
+
+          <button
             onClick={() => handleTabChange('exams')}
             className={`py-3.5 px-4 text-xs font-bold uppercase tracking-wider border-b-2 transition-colors flex items-center space-x-2 whitespace-nowrap cursor-pointer ${
               facultyActiveTab === 'exams'
@@ -1512,6 +1638,18 @@ export const FacultyDashboard = () => {
           </button>
 
           <button
+            onClick={() => handleTabChange('assignments')}
+            className={`py-3.5 px-4 text-xs font-bold uppercase tracking-wider border-b-2 transition-colors flex items-center space-x-2 whitespace-nowrap cursor-pointer ${
+              facultyActiveTab === 'assignments'
+                ? 'border-purple-600 text-purple-800'
+                : 'border-transparent text-navy-500 hover:text-navy-900'
+            }`}
+          >
+            <FileText className="w-4 h-4" />
+            <span>Assignments & Submissions ({assignments.length})</span>
+          </button>
+
+          <button
             onClick={() => handleTabChange('analytics')}
             className={`py-3.5 px-4 text-xs font-bold uppercase tracking-wider border-b-2 transition-colors flex items-center space-x-2 whitespace-nowrap cursor-pointer ${
               facultyActiveTab === 'analytics'
@@ -1520,63 +1658,88 @@ export const FacultyDashboard = () => {
             }`}
           >
             <BarChart2 className="w-4 h-4" />
-            <span>Attendance Analytics</span>
+            <span>Student Performance Analytics</span>
+          </button>
+
+          <button
+            onClick={() => handleTabChange('syllabus')}
+            className={`py-3.5 px-4 text-xs font-bold uppercase tracking-wider border-b-2 transition-colors flex items-center space-x-2 whitespace-nowrap cursor-pointer ${
+              facultyActiveTab === 'syllabus'
+                ? 'border-purple-600 text-purple-800'
+                : 'border-transparent text-navy-500 hover:text-navy-900'
+            }`}
+          >
+            <BookOpen className="w-4 h-4" />
+            <span>Syllabus Tracker</span>
+          </button>
+
+          <button
+            onClick={() => handleTabChange('resources')}
+            className={`py-3.5 px-4 text-xs font-bold uppercase tracking-wider border-b-2 transition-colors flex items-center space-x-2 whitespace-nowrap cursor-pointer ${
+              facultyActiveTab === 'resources'
+                ? 'border-purple-600 text-purple-800'
+                : 'border-transparent text-navy-500 hover:text-navy-900'
+            }`}
+          >
+            <FolderKanban className="w-4 h-4" />
+            <span>Resource Library</span>
+          </button>
+
+          <button
+            onClick={() => handleTabChange('appointments')}
+            className={`py-3.5 px-4 text-xs font-bold uppercase tracking-wider border-b-2 transition-colors flex items-center space-x-2 whitespace-nowrap cursor-pointer ${
+              facultyActiveTab === 'appointments'
+                ? 'border-purple-600 text-purple-800'
+                : 'border-transparent text-navy-500 hover:text-navy-900'
+            }`}
+          >
+            <CalendarDays className="w-4 h-4" />
+            <span>Appointments</span>
           </button>
         </div>
 
         {/* TAB 1: Weekly Timetable */}
         {facultyActiveTab === 'timetable' && (
-          <Card
-            title="Weekly Teaching Schedule & Timetable Slots"
-            subtitle="Lecture periods and classroom allotments assigned to your faculty profile"
-          >
-            {mySlots.length === 0 ? (
-              <p className="text-xs text-navy-400 py-6 text-center">No individual timetable sessions scheduled for your profile this week.</p>
-            ) : (
-              <div className="space-y-2">
-                {mySlots.map((slot) => {
-                  const isToday = slot.dayOfWeek && slot.dayOfWeek.toLowerCase() === todayName.toLowerCase();
-                  return (
-                    <div
-                      key={slot._id || slot.id}
-                      className={`p-3.5 rounded-xl border flex items-center justify-between text-xs transition-colors ${
-                        isToday ? 'bg-purple-50/60 border-purple-200' : 'bg-warm-50 border-navy-100'
-                      }`}
-                    >
-                      <div>
-                        <div className="flex items-center space-x-2">
-                          <span className="font-bold text-navy-950 block">{slot.subject?.name || slot.subject?.code || 'Class Lecture'}</span>
-                          {isToday && <Badge variant="purple" size="xs">Today</Badge>}
-                        </div>
-                        <span className="text-[11px] text-navy-500 font-mono">
-                          {slot.dayOfWeek?.toUpperCase()} &bull; Period {slot.periodNumber} ({slot.startTime} - {slot.endTime})
-                        </span>
-                      </div>
-                      <div className="text-right">
-                        <Badge variant="teal" size="xs">Room {slot.roomNumber || 'LH-101'}</Badge>
-                        <span className="text-[10px] text-navy-500 block mt-1">
-                          Section {slot.section || 'A'} &bull; Semester {slot.semester} &bull; {slot.department?.name || myDeptName}
-                        </span>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </Card>
-        )}
-
-        {/* TAB 2: Courses & Syllabus Progress */}
-        {facultyActiveTab === 'courses' && (
-          <SyllabusMaterialsSection
-            assignedSubjects={assignedSubjects}
-            materials={materials}
-            onRefreshMaterials={handleRefreshMaterials}
-            onOpenSubjectDetails={(sub) => {
+          <TeachingScheduleSection
+            timetableSlots={mySlots}
+            myDeptName={myDeptName}
+            onOpenAttendanceModal={(subId, period) => handleOpenAttendanceModal(subId, period)}
+            onNavigateToSubject={(sub) => {
               setSelectedDetailSubject(sub);
+              setSubjectDetailsInitialTab('overview');
               setIsSubjectDetailsOpen(true);
             }}
+          />
+        )}
+
+        {/* TAB 2: Assigned Courses */}
+        {facultyActiveTab === 'courses' && (
+          <AssignedCoursesSection
+            assignedSubjects={assignedSubjects}
+            isLoading={isLoading}
+            onRetry={loadData}
+            onRefresh={loadData}
+            onOpenDetails={(sub, initialTab = 'overview') => {
+              setSelectedDetailSubject(sub);
+              setSubjectDetailsInitialTab(initialTab);
+              setIsSubjectDetailsOpen(true);
+            }}
+            materials={materials}
+            onRefreshMaterials={handleRefreshMaterials}
             onAddToast={addToast}
+            onNavigateToAttendance={(subId) => {
+              setAttendanceSubjectId(subId);
+              handleOpenAttendanceModal(subId);
+            }}
+          />
+        )}
+
+        {/* TAB 4: Pending Tasks */}
+        {facultyActiveTab === 'pending' && (
+          <PendingTasksSection
+            tasks={pendingTasks}
+            onRefresh={loadData}
+            isLoading={isLoading}
           />
         )}
 
@@ -1634,12 +1797,26 @@ export const FacultyDashboard = () => {
                   setRosterSemesterFilter(e.target.value);
                   setRosterPage(1);
                 }}
-                className="text-xs px-2.5 py-1.5 rounded-lg border border-slate-200 text-slate-700 focus:outline-none focus:ring-1 focus:ring-purple-500"
+                className="text-xs px-2.5 py-1.5 rounded-lg border border-slate-200 text-slate-700 focus:outline-none focus:ring-1 focus:ring-purple-500 cursor-pointer"
               >
                 <option value="all">All Semesters</option>
                 {[1, 2, 3, 4, 5, 6, 7, 8].map((sem) => (
                   <option key={sem} value={sem}>Semester {sem}</option>
                 ))}
+              </select>
+
+              <select
+                value={rosterSectionFilter}
+                onChange={(e) => {
+                  setRosterSectionFilter(e.target.value);
+                  setRosterPage(1);
+                }}
+                className="text-xs px-2.5 py-1.5 rounded-lg border border-slate-200 text-slate-700 focus:outline-none focus:ring-1 focus:ring-purple-500 cursor-pointer"
+              >
+                <option value="all">All Sections</option>
+                <option value="A">Section A</option>
+                <option value="B">Section B</option>
+                <option value="C">Section C</option>
               </select>
             </div>
 
@@ -1656,7 +1833,19 @@ export const FacultyDashboard = () => {
                   const attPct = stRecords.length > 0 ? `${Math.round((present / stRecords.length) * 100)}%` : null;
 
                   return (
-                    <div key={stud._id || stud.id} className="p-3 rounded-xl bg-warm-50 border border-navy-100 flex items-center justify-between text-xs">
+                    <div
+                      key={stud._id || stud.id}
+                      onClick={() => {
+                        const firstSub = assignedSubjects[0];
+                        if (firstSub) {
+                          setSelectedDetailSubject(firstSub);
+                          setSubjectDetailsInitialTab('roster');
+                          setIsSubjectDetailsOpen(true);
+                        }
+                      }}
+                      className="p-3 rounded-xl bg-warm-50 hover:bg-purple-50/50 border border-navy-100 hover:border-purple-200 transition-colors flex items-center justify-between text-xs cursor-pointer group"
+                      title="Click to view student cohort profile"
+                    >
                       <div>
                         <div className="flex items-center space-x-2">
                           <span className="font-mono font-bold text-teal-900">{stud.rollNumber}</span>
@@ -1824,12 +2013,37 @@ export const FacultyDashboard = () => {
           />
         )}
 
-        {/* TAB 6: Advanced Attendance Analytics */}
+        {/* TAB 6: Student Performance Analytics */}
         {facultyActiveTab === 'analytics' && (
-          <AttendanceAnalyticsSection
-            attendanceRecords={attendanceRecords}
+          <StudentPerformanceAnalyticsSection
             assignedSubjects={assignedSubjects}
             assignedStudents={assignedStudents}
+            attendanceRecords={attendanceRecords}
+          />
+        )}
+
+        {/* TAB 7: Smart Syllabus Tracker (Phase 3) */}
+        {facultyActiveTab === 'syllabus' && (
+          <SmartSyllabusTrackerSection
+            assignedSubjects={assignedSubjects}
+            timetableSlots={mySlots}
+            onAddToast={addToast}
+          />
+        )}
+
+        {/* TAB 8: Learning Resource Library (Phase 4) */}
+        {facultyActiveTab === 'resources' && (
+          <LearningResourceLibrarySection
+            assignedSubjects={assignedSubjects}
+            onAddToast={addToast}
+          />
+        )}
+
+        {/* TAB 9: Student Appointment System (Phase 5) */}
+        {facultyActiveTab === 'appointments' && (
+          <StudentAppointmentSection
+            assignedSubjects={assignedSubjects}
+            onAddToast={addToast}
           />
         )}
 
@@ -2073,14 +2287,57 @@ export const FacultyDashboard = () => {
         {/* Subject Details Drawer / Modal */}
         <SubjectDetailsModal
           isOpen={isSubjectDetailsOpen}
-          onClose={() => setIsSubjectDetailsOpen(false)}
+          onClose={() => {
+            setIsSubjectDetailsOpen(false);
+            setSelectedDetailSubject(null);
+            setSubjectDetailsInitialTab('overview');
+          }}
           subject={selectedDetailSubject}
+          initialTab={subjectDetailsInitialTab}
           onNavigateToAttendance={(subId) => {
             setAttendanceSubjectId(subId);
             setIsMarkAttendanceOpen(true);
           }}
           onRefreshAssignedSubjects={loadData}
           onAddToast={addToast}
+        />
+
+        {/* KPI Card 1 Detail Modal: Assigned Subjects */}
+        <AssignedSubjectsModal
+          isOpen={isAssignedSubjectsModalOpen}
+          onClose={() => setIsAssignedSubjectsModalOpen(false)}
+          assignedSubjects={assignedSubjects}
+          isLoading={isLoading}
+          onRefresh={loadData}
+          onOpenAttendance={(subId) => handleOpenAttendanceModal(subId)}
+        />
+
+        {/* KPI Card 2 Detail Modal: Weekly Teaching Schedule */}
+        <WeeklyScheduleModal
+          isOpen={isWeeklyScheduleModalOpen}
+          onClose={() => setIsWeeklyScheduleModalOpen(false)}
+          timetableSlots={mySlots}
+          myDeptName={myDeptName}
+          onOpenAttendance={(subId, period) => handleOpenAttendanceModal(subId, period)}
+        />
+
+        {/* KPI Card 3 Detail Modal: Students Under My Subjects */}
+        <StudentsUnderMySubjectsModal
+          isOpen={isStudentsModalOpen}
+          onClose={() => setIsStudentsModalOpen(false)}
+          uniqueStudents={assignedStudents}
+          assignedSubjects={assignedSubjects}
+          attendanceRecords={attendanceRecords}
+          getStudentsForSubject={getStudentsForSubject}
+        />
+
+        {/* KPI Card 4 Detail Modal: Pending Academic Tasks */}
+        <PendingTasksModal
+          isOpen={isPendingTasksModalOpen}
+          onClose={() => setIsPendingTasksModalOpen(false)}
+          tasks={pendingTasks}
+          isLoading={isLoading}
+          onRefresh={loadData}
         />
       </div>
     );

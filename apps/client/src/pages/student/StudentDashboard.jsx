@@ -42,6 +42,7 @@ import api from '../../api/apiClient';
 import { useAuth } from '../../context/AuthContext';
 import { useToast } from '../../context/ToastContext';
 import { ROLES, USER_STATUS, DEPARTMENTS } from '@college-erp/shared';
+import StudentAppointmentsSection from './components/StudentAppointmentsSection';
 
 export const StudentDashboard = () => {
   const { user } = useAuth();
@@ -716,6 +717,18 @@ export const StudentDashboard = () => {
             <GraduationCap className="w-4 h-4" />
             <span>Student Profile</span>
           </button>
+
+          <button
+            onClick={() => setStudentActiveTab('appointments')}
+            className={`py-3.5 px-4 text-xs font-bold uppercase tracking-wider border-b-2 transition-colors flex items-center space-x-2 whitespace-nowrap ${
+              studentActiveTab === 'appointments'
+                ? 'border-blue-600 text-blue-800'
+                : 'border-transparent text-navy-500 hover:text-navy-900'
+            }`}
+          >
+            <CalendarCheck className="w-4 h-4" />
+            <span>Faculty Appointments</span>
+          </button>
         </div>
 
         {/* TAB 1: Enrolled Courses */}
@@ -1003,6 +1016,11 @@ export const StudentDashboard = () => {
               </div>
             )}
           </Card>
+        )}
+
+        {/* TAB 8: Faculty Appointments & Mentorship */}
+        {studentActiveTab === 'appointments' && (
+          <StudentAppointmentsSection onAddToast={addToast} />
         )}
       </div>
     );

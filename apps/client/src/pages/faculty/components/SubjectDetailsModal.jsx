@@ -45,11 +45,12 @@ export const SubjectDetailsModal = ({
   isOpen,
   onClose,
   subject,
+  initialTab = 'overview',
   onNavigateToAttendance,
   onRefreshAssignedSubjects,
   onAddToast
 }) => {
-  const [activeTab, setActiveTab] = useState('overview'); // 'overview' | 'roster' | 'syllabus' | 'materials' | 'assignments' | 'attendance'
+  const [activeTab, setActiveTab] = useState(initialTab || 'overview'); // 'overview' | 'roster' | 'syllabus' | 'materials' | 'assignments' | 'attendance'
 
   // ==========================================
   // SECTION B: STUDENT ROSTER STATE
@@ -168,10 +169,10 @@ export const SubjectDetailsModal = ({
 
   useEffect(() => {
     if (isOpen && subjectId) {
-      setActiveTab('overview');
+      setActiveTab(initialTab || 'overview');
       loadAllSubjectData();
     }
-  }, [isOpen, subjectId, loadAllSubjectData]);
+  }, [isOpen, subjectId, initialTab, loadAllSubjectData]);
 
   // ==========================================
   // SYLLABUS HANDLERS
