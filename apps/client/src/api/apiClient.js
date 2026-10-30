@@ -615,6 +615,82 @@ class ApiClient {
     const qs = searchParams.toString();
     return this.get(`/v1/attendance/summary${qs ? `?${qs}` : ''}`);
   }
+
+  // Assignment & Student Submission Management
+  getAssignments(params = {}) {
+    const searchParams = new URLSearchParams();
+    if (params.subject) searchParams.append('subject', params.subject);
+    if (params.semester) searchParams.append('semester', params.semester);
+    if (params.status) searchParams.append('status', params.status);
+    const qs = searchParams.toString();
+    return this.get(`/v1/assignments${qs ? `?${qs}` : ''}`);
+  }
+
+  getAssignmentById(id) {
+    return this.get(`/v1/assignments/${id}`);
+  }
+
+  createAssignment(data) {
+    return this.post('/v1/assignments', data);
+  }
+
+  updateAssignment(id, data) {
+    return this.put(`/v1/assignments/${id}`, data);
+  }
+
+  deleteAssignment(id) {
+    return this.delete(`/v1/assignments/${id}`);
+  }
+
+  publishAssignment(id) {
+    return this.patch(`/v1/assignments/${id}/publish`, {});
+  }
+
+  getAssignmentSubmissions(id) {
+    return this.get(`/v1/assignments/${id}/submissions`);
+  }
+
+  evaluateAssignmentSubmission(assignmentId, submissionId, data) {
+    return this.post(`/v1/assignments/${assignmentId}/submissions/${submissionId}/evaluate`, data);
+  }
+
+  submitAssignment(id, data) {
+    return this.post(`/v1/assignments/${id}/submit`, data);
+  }
+
+  // Syllabus Progress Management
+  getSubjectSyllabus(subjectId) {
+    return this.get(`/v1/syllabus/subject/${subjectId}`);
+  }
+
+  updateUnitProgress(subjectId, unitNumber, data) {
+    return this.patch(`/v1/syllabus/subject/${subjectId}/unit/${unitNumber}`, data);
+  }
+
+  getFacultySyllabusSummary() {
+    return this.get('/v1/syllabus/faculty/summary');
+  }
+
+  // Learning Material Management
+  getMaterials(params = {}) {
+    const searchParams = new URLSearchParams();
+    if (params.subject) searchParams.append('subject', params.subject);
+    if (params.unitNumber) searchParams.append('unitNumber', params.unitNumber);
+    const qs = searchParams.toString();
+    return this.get(`/v1/materials${qs ? `?${qs}` : ''}`);
+  }
+
+  createMaterial(data) {
+    return this.post('/v1/materials', data);
+  }
+
+  updateMaterial(id, data) {
+    return this.put(`/v1/materials/${id}`, data);
+  }
+
+  deleteMaterial(id) {
+    return this.delete(`/v1/materials/${id}`);
+  }
 }
 
 export const api = new ApiClient(API_BASE_URL);

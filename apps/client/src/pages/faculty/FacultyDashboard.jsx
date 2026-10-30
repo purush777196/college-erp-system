@@ -32,7 +32,12 @@ import {
   Bell,
   Percent,
   Download,
-  Filter
+  Filter,
+  Plus,
+  Trash2,
+  Eye,
+  BarChart2,
+  User
 } from 'lucide-react';
 import Card from '../../components/common/Card';
 import CampusBuildingGraphic from '../../components/common/CampusBuildingGraphic';
@@ -51,6 +56,12 @@ import { useAuth } from '../../context/AuthContext';
 import { useToast } from '../../context/ToastContext';
 import { ROLES, USER_STATUS, DEPARTMENTS } from '@college-erp/shared';
 import { exportToCsv } from '../../utils/csvExport';
+
+import AssignmentsSection from './components/AssignmentsSection';
+import SyllabusMaterialsSection from './components/SyllabusMaterialsSection';
+import AttendanceAnalyticsSection from './components/AttendanceAnalyticsSection';
+import FacultyProfileModal from './components/FacultyProfileModal';
+import FacultyNotificationsCenter from './components/FacultyNotificationsCenter';
 
 function formatRelativeTime(dateString) {
   if (!dateString) return 'Recently';
@@ -100,7 +111,7 @@ function getActivityDisplay(act) {
   };
 }
 
-const VALID_FACULTY_TABS = ['timetable', 'courses', 'roster', 'exams'];
+const VALID_FACULTY_TABS = ['timetable', 'courses', 'roster', 'exams', 'assignments', 'analytics'];
 
 export const FacultyDashboard = () => {
   const { user } = useAuth();
@@ -118,6 +129,9 @@ export const FacultyDashboard = () => {
   const [activities, setActivities] = useState([]);
   const [notices, setNotices] = useState([]);
   const [results, setResults] = useState([]);
+  const [assignments, setAssignments] = useState([]);
+  const [materials, setMaterials] = useState([]);
+  const [isProfileModalOpen, setIsProfileModalOpen] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
 
   const [searchParams, setSearchParams] = useSearchParams();
@@ -186,7 +200,7 @@ export const FacultyDashboard = () => {
     setIsLoading(true);
     try {
       if (isFacultyRole) {
-        const [myProfRes, subjRes, timeRes, studRes, examRes, attRes, actRes, notRes, resRes] = await Promise.all([
+        const [myProfRes, subjRes, timeRes, studRes, examRes, attRes, actRes, notRes, resRes, assignRes, matRes] = await Promise.all([
           api.getMyFacultyProfile().catch(() => ({ data: null })),
           api.getSubjects().catch(() => ({ data: [] })),
           api.getTimetable().catch(() => ({ data: [] })),
@@ -195,7 +209,9 @@ export const FacultyDashboard = () => {
           api.getAttendance().catch(() => ({ data: [] })),
           api.getMyFacultyActivities().catch(() => ({ data: [] })),
           api.getNotices().catch(() => ({ data: [] })),
-          api.getResults().catch(() => ({ data: [] }))
+          api.getResults().catch(() => ({ data: [] })),
+          api.getAssignments().catch(() => ({ data: [] })),
+          api.getMaterials().catch(() => ({ data: [] }))
         ]);
 
         if (myProfRes?.data) setMyProfile(myProfRes.data);
@@ -207,6 +223,8 @@ export const FacultyDashboard = () => {
         if (actRes?.data) setActivities(Array.isArray(actRes.data) ? actRes.data : []);
         if (notRes?.data) setNotices(Array.isArray(notRes.data) ? notRes.data : []);
         if (resRes?.data) setResults(Array.isArray(resRes.data) ? resRes.data : []);
+        if (assignRes?.data) setAssignments(Array.isArray(assignRes.data) ? assignRes.data : []);
+        if (matRes?.data) setMaterials(Array.isArray(matRes.data) ? matRes.data : []);
       } else {
         const [facRes, subjRes, timeRes, deptRes, usersRes] = await Promise.all([
           api.getFaculty({
@@ -239,6 +257,70 @@ export const FacultyDashboard = () => {
   useEffect(() => {
     loadData();
   }, [loadData]);
+
+  // Assignment Handlers
+  const handleCreateAssignment = async (formData) => {
+    const res = await api.createAssignment(formData);
+    addToast({
+      type: 'success',
+      title: 'Assignment Created',
+      message: `Assignment "${formData.title}" created successfully.`
+    });
+    const updated = await api.getAssignments();
+    if (updated?.data) setAssignments(Array.isArray(updated.data) ? updated.data : []);
+    return res;
+  };
+
+  const handleUpdateAssignment = async (id, formData) => {
+    const res = await api.updateAssignment(id, formData);
+    addToast({
+      type: 'success',
+      title: 'Assignment Updated',
+      message: `Assignment "${formData.title}" updated successfully.`
+    });
+    const updated = await api.getAssignments();
+    if (updated?.data) setAssignments(Array.isArray(updated.data) ? updated.data : []);
+    return res;
+  };
+
+  const handleDeleteAssignment = async (id) => {
+    await api.deleteAssignment(id);
+    addToast({
+      type: 'success',
+      title: 'Assignment Removed',
+      message: 'Assignment removed successfully.'
+    });
+    const updated = await api.getAssignments();
+    if (updated?.data) setAssignments(Array.isArray(updated.data) ? updated.data : []);
+  };
+
+  const handlePublishAssignment = async (id) => {
+    await api.publishAssignment(id);
+    addToast({
+      type: 'success',
+      title: 'Assignment Published',
+      message: 'Assignment is now published and active for students.'
+    });
+    const updated = await api.getAssignments();
+    if (updated?.data) setAssignments(Array.isArray(updated.data) ? updated.data : []);
+  };
+
+  const handleEvaluateSubmission = async (assignmentId, submissionId, data) => {
+    const res = await api.evaluateAssignmentSubmission(assignmentId, submissionId, data);
+    addToast({
+      type: 'success',
+      title: 'Submission Evaluated',
+      message: `Grade (${data.marksObtained} marks) and feedback saved.`
+    });
+    const updated = await api.getAssignments();
+    if (updated?.data) setAssignments(Array.isArray(updated.data) ? updated.data : []);
+    return res;
+  };
+
+  const handleRefreshMaterials = async () => {
+    const res = await api.getMaterials();
+    if (res?.data) setMaterials(Array.isArray(res.data) ? res.data : []);
+  };
 
   // Open Edit Profile
   const handleOpenEdit = (fac) => {
@@ -970,6 +1052,15 @@ export const FacultyDashboard = () => {
             <Button
               variant="secondary"
               size="sm"
+              onClick={() => setIsProfileModalOpen(true)}
+              icon={User}
+              className="bg-white/10 hover:bg-white/20 text-white border border-white/20"
+            >
+              Profile & Workload
+            </Button>
+            <Button
+              variant="secondary"
+              size="sm"
               onClick={handleOpenAttendanceModal}
               icon={CalendarCheck}
               className="bg-white/10 hover:bg-white/20 text-white border border-white/20"
@@ -1209,40 +1300,14 @@ export const FacultyDashboard = () => {
           </div>
         </div>
 
-        {/* Row 4: Institutional Notices & Circulars */}
-        <div className="bg-white rounded-2xl p-5 border border-slate-200/80 shadow-subtle">
-          <div className="flex items-center justify-between mb-4">
-            <div className="flex items-center space-x-2">
-              <Bell className="w-4 h-4 text-purple-600" />
-              <h2 className="text-sm sm:text-base font-bold text-slate-900">Institutional Notices & Circulars</h2>
-            </div>
-            <span className="text-xs text-slate-500 font-medium">{notices.length} Published</span>
-          </div>
-
-          {notices.length === 0 ? (
-            <p className="text-xs text-slate-400 py-4 text-center">No institutional circulars published at this time.</p>
-          ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-              {notices.slice(0, 4).map((notice) => (
-                <div key={notice._id || notice.id} className="p-3.5 rounded-xl bg-slate-50 border border-slate-200/70 hover:border-purple-300 transition-colors flex flex-col justify-between">
-                  <div>
-                    <div className="flex items-center justify-between mb-1">
-                      <span className="text-xs font-bold text-slate-900">{notice.title}</span>
-                      <Badge variant="teal" size="xs">{notice.category || 'General'}</Badge>
-                    </div>
-                    <p className="text-xs text-slate-600 line-clamp-2 mt-1">
-                      {notice.content}
-                    </p>
-                  </div>
-                  <div className="flex items-center justify-between text-[11px] text-slate-400 mt-3 pt-2 border-t border-slate-200/60">
-                    <span>{notice.priority ? `Priority: ${notice.priority}` : 'Notice'}</span>
-                    <span>{formatRelativeTime(notice.createdAt || notice.publishedAt)}</span>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
+        {/* Row 4: Faculty Notifications & Action Center */}
+        <FacultyNotificationsCenter
+          assignments={assignments}
+          exams={exams}
+          timetableSlots={mySlots}
+          notices={notices}
+          onNavigateTab={handleTabChange}
+        />
 
         {/* Navigation Tabs (URL Synchronized) */}
         <div className="flex border-b border-navy-200 bg-white px-4 rounded-xl shadow-subtle overflow-x-auto">
@@ -1271,6 +1336,18 @@ export const FacultyDashboard = () => {
           </button>
 
           <button
+            onClick={() => handleTabChange('assignments')}
+            className={`py-3.5 px-4 text-xs font-bold uppercase tracking-wider border-b-2 transition-colors flex items-center space-x-2 whitespace-nowrap cursor-pointer ${
+              facultyActiveTab === 'assignments'
+                ? 'border-purple-600 text-purple-800'
+                : 'border-transparent text-navy-500 hover:text-navy-900'
+            }`}
+          >
+            <FileText className="w-4 h-4" />
+            <span>Assignments & Submissions ({assignments.length})</span>
+          </button>
+
+          <button
             onClick={() => handleTabChange('roster')}
             className={`py-3.5 px-4 text-xs font-bold uppercase tracking-wider border-b-2 transition-colors flex items-center space-x-2 whitespace-nowrap cursor-pointer ${
               facultyActiveTab === 'roster'
@@ -1292,6 +1369,18 @@ export const FacultyDashboard = () => {
           >
             <Award className="w-4 h-4" />
             <span>Examinations & Marks ({exams.length})</span>
+          </button>
+
+          <button
+            onClick={() => handleTabChange('analytics')}
+            className={`py-3.5 px-4 text-xs font-bold uppercase tracking-wider border-b-2 transition-colors flex items-center space-x-2 whitespace-nowrap cursor-pointer ${
+              facultyActiveTab === 'analytics'
+                ? 'border-purple-600 text-purple-800'
+                : 'border-transparent text-navy-500 hover:text-navy-900'
+            }`}
+          >
+            <BarChart2 className="w-4 h-4" />
+            <span>Attendance Analytics</span>
           </button>
         </div>
 
@@ -1337,41 +1426,14 @@ export const FacultyDashboard = () => {
           </Card>
         )}
 
-        {/* TAB 2: Courses */}
+        {/* TAB 2: Courses & Syllabus Progress */}
         {facultyActiveTab === 'courses' && (
-          <Card
-            title="Assigned Courses & Curriculum Syllabus"
-            subtitle="Subject syllabus, course codes, and lecture credit allocations"
-          >
-            {assignedSubjects.length === 0 ? (
-              <p className="text-xs text-navy-400 py-6 text-center">No curriculum subjects allocated to your faculty account.</p>
-            ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                {assignedSubjects.map((sub) => {
-                  const enrolledCount = getStudentsForSubject(sub._id || sub.id).length;
-                  return (
-                    <div key={sub._id || sub.id} className="p-4 rounded-xl bg-warm-50 border border-navy-100 flex flex-col justify-between text-xs">
-                      <div>
-                        <div className="flex items-start justify-between">
-                          <div>
-                            <span className="font-bold text-navy-950 text-sm block">{sub.name}</span>
-                            <span className="text-xs text-navy-500 font-mono mt-0.5 block">
-                              Code: {sub.code} &bull; Semester {sub.semester}
-                            </span>
-                          </div>
-                          <Badge variant="navy" size="xs">{sub.credits} Credits</Badge>
-                        </div>
-                        <div className="mt-3 pt-3 border-t border-navy-100/70 flex items-center justify-between text-[11px] text-navy-600">
-                          <span>Room: {sub.roomNumber || 'Classroom Allotted'}</span>
-                          <span className="font-semibold text-purple-700">{enrolledCount} Enrolled Students</span>
-                        </div>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </Card>
+          <SyllabusMaterialsSection
+            assignedSubjects={assignedSubjects}
+            materials={materials}
+            onRefreshMaterials={handleRefreshMaterials}
+            onAddToast={addToast}
+          />
         )}
 
         {/* TAB 3: Student Roster */}
@@ -1603,6 +1665,30 @@ export const FacultyDashboard = () => {
           </Card>
         )}
 
+        {/* TAB 5: Assignments & Submissions */}
+        {facultyActiveTab === 'assignments' && (
+          <AssignmentsSection
+            assignments={assignments}
+            assignedSubjects={assignedSubjects}
+            enrolledStudents={assignedStudents}
+            onCreateAssignment={handleCreateAssignment}
+            onUpdateAssignment={handleUpdateAssignment}
+            onDeleteAssignment={handleDeleteAssignment}
+            onPublishAssignment={handlePublishAssignment}
+            onEvaluateSubmission={handleEvaluateSubmission}
+            isLoading={isLoading}
+          />
+        )}
+
+        {/* TAB 6: Advanced Attendance Analytics */}
+        {facultyActiveTab === 'analytics' && (
+          <AttendanceAnalyticsSection
+            attendanceRecords={attendanceRecords}
+            assignedSubjects={assignedSubjects}
+            assignedStudents={assignedStudents}
+          />
+        )}
+
         {/* Full-Class Classroom Attendance Modal */}
         <Modal
           isOpen={isMarkAttendanceOpen}
@@ -1829,6 +1915,16 @@ export const FacultyDashboard = () => {
             )}
           </form>
         </Modal>
+
+        {/* Faculty Profile & Workload Modal */}
+        <FacultyProfileModal
+          isOpen={isProfileModalOpen}
+          onClose={() => setIsProfileModalOpen(false)}
+          profile={myProfile}
+          user={user}
+          assignedSubjects={assignedSubjects}
+          timetableSlots={mySlots}
+        />
       </div>
     );
   }
