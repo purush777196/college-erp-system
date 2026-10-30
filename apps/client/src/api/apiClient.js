@@ -299,6 +299,10 @@ class ApiClient {
     return this.get('/v1/faculty/me');
   }
 
+  getMyFacultyActivities() {
+    return this.get('/v1/faculty/me/activities');
+  }
+
   createFaculty(data) {
     return this.post('/v1/faculty', data);
   }
@@ -313,6 +317,7 @@ class ApiClient {
     if (params.page) searchParams.append('page', params.page);
     if (params.limit) searchParams.append('limit', params.limit);
     if (params.department) searchParams.append('department', params.department);
+    if (params.course) searchParams.append('course', params.course);
     if (params.semester) searchParams.append('semester', params.semester);
     if (params.batch) searchParams.append('batch', params.batch);
     if (params.status) searchParams.append('status', params.status);
@@ -584,6 +589,7 @@ class ApiClient {
     const searchParams = new URLSearchParams();
     if (params.examination) searchParams.append('examination', params.examination);
     if (params.student) searchParams.append('student', params.student);
+    if (params.subject) searchParams.append('subject', params.subject);
     const qs = searchParams.toString();
     return this.get(`/v1/results${qs ? `?${qs}` : ''}`);
   }

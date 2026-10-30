@@ -161,10 +161,29 @@ async function updateFacultyProfile(req, res, next) {
   }
 }
 
+async function getMyFacultyActivities(req, res, next) {
+  try {
+    const AuditLog = require('../audit-logs/audit.model');
+    const logs = await AuditLog.find({ user: req.user._id })
+      .sort({ createdAt: -1 })
+      .limit(20)
+      .lean();
+
+    return sendSuccess(res, {
+      message: 'Faculty recent activities retrieved successfully',
+      data: logs,
+      meta: { count: logs.length }
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+
 module.exports = {
   listFaculty,
   getFacultyById,
   getMyFacultyProfile,
+  getMyFacultyActivities,
   createFacultyProfile,
   updateFacultyProfile
 };

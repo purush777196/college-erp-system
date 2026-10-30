@@ -3,6 +3,7 @@ const Examination = require('../examinations/exam.model');
 const Student = require('../students/student.model');
 const Department = require('../departments/department.model');
 const mongoose = require('mongoose');
+const { recordAuditLog } = require('../../utils/auditLogger');
 const { sendSuccess, sendError } = require('../../utils/response');
 const { HTTP_STATUS, ROLES } = require('@college-erp/shared');
 
@@ -119,6 +120,14 @@ async function recordResult(req, res, next) {
         populate: { path: 'user', select: 'name' }
       });
 
+    await recordAuditLog({
+      req,
+      action: 'MARKS_RECORDED',
+      entityType: 'Result',
+      entityId: String(result._id || subject),
+      details: { examination, subject, student, totalMarks, grade, status }
+    });
+
     return sendSuccess(res, {
       statusCode: HTTP_STATUS.OK,
       message: 'Marks entered and grade computed successfully',
@@ -181,6 +190,14 @@ async function batchRecordResults(req, res, next) {
     }
 
     const result = await Result.bulkWrite(operations);
+
+    await recordAuditLog({
+      req,
+      action: 'MARKS_RECORDED',
+      entityType: 'Result',
+      entityId: String(subject),
+      details: { examination, subject, count: records.length }
+    });
 
     return sendSuccess(res, {
       statusCode: HTTP_STATUS.OK,
