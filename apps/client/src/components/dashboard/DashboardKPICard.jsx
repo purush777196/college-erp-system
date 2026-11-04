@@ -8,7 +8,8 @@ export const DashboardKPICard = ({
   trend,
   trendDirection = 'up',
   color = 'emerald', // emerald, blue, amber, rose, purple
-  className = ''
+  className = '',
+  onClick
 }) => {
   const colorMap = {
     emerald: {
@@ -41,7 +42,26 @@ export const DashboardKPICard = ({
   const scheme = colorMap[color] || colorMap.emerald;
 
   return (
-    <div className={`bg-white rounded-2xl p-4 sm:p-5 border border-slate-200/80 shadow-xs hover-card-elevate flex items-center justify-between ${className}`}>
+    <div
+      onClick={onClick}
+      role={onClick ? 'button' : undefined}
+      tabIndex={onClick ? 0 : undefined}
+      onKeyDown={
+        onClick
+          ? (e) => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                onClick();
+              }
+            }
+          : undefined
+      }
+      className={`bg-white rounded-2xl p-4 sm:p-5 border border-slate-200/80 shadow-xs hover-card-elevate flex items-center justify-between ${
+        onClick
+          ? 'cursor-pointer transition-transform hover:-translate-y-0.5 focus:outline-none focus:ring-2 focus:ring-teal-500'
+          : ''
+      } ${className}`}
+    >
       <div className="flex items-center space-x-3.5 sm:space-x-4">
         {/* Icon box */}
         <div className={`w-12 h-12 rounded-2xl ${scheme.bg} ${scheme.icon} flex items-center justify-center shrink-0 shadow-2xs`}>
@@ -75,4 +95,3 @@ export const DashboardKPICard = ({
 };
 
 export default DashboardKPICard;
-

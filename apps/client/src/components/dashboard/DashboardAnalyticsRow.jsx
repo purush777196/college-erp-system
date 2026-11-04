@@ -37,28 +37,41 @@ export const DashboardAnalyticsRow = ({
     { name: 'Other', pct: '21%', color: '#3b82f6' }
   ],
   quickActions = null,
-  onActionClick = null
+  onActionClick = null,
+  onRangeChange = null,
+  rangeOptions = ['This Year', 'Past 6 Months', 'All Time'],
+  selectedRange = null
 }) => {
   const navigate = useNavigate();
-  const [trendRange, setTrendRange] = useState('This Year');
+  const [internalRange, setInternalRange] = useState('This Year');
+  const currentRange = selectedRange || internalRange;
 
   // Interactive SVG points for line chart
-  const maxVal = 7000;
-  const minVal = 4000;
   const width = 460;
   const height = 150;
 
-  const points = enrollmentTrend.map((d, i) => {
-    const x = 30 + (i * (width - 60)) / (enrollmentTrend.length - 1);
-    const y = height - 20 - ((d.val - minVal) / (maxVal - minVal)) * (height - 40);
-    return { x, y, label: d.label, val: d.val };
+  const vals = (enrollmentTrend || []).map((d) => Number(d.val || 0));
+  const hasValues = vals.length > 0;
+  const isPercentage = hasValues && Math.max(...vals) <= 100 && (chartTitle.toLowerCase().includes('attendance') || Math.max(...vals) <= 100);
+  
+  const maxVal = isPercentage ? 100 : (hasValues ? Math.max(...vals, 1) : 100);
+  const minVal = isPercentage ? 0 : (hasValues && Math.min(...vals) > 1000 ? Math.floor(Math.min(...vals) * 0.8) : 0);
+  const range = maxVal - minVal || 1;
+
+  const points = (enrollmentTrend || []).map((d, i) => {
+    const x = 30 + (i * (width - 60)) / Math.max((enrollmentTrend || []).length - 1, 1);
+    const rawVal = Number(d.val || 0);
+    const y = height - 20 - ((rawVal - minVal) / range) * (height - 40);
+    return { x, y: isNaN(y) ? height - 20 : y, label: d.label, val: d.val };
   });
 
   const pathD = points.reduce((acc, p, i) => {
     return i === 0 ? `M ${p.x} ${p.y}` : `${acc} L ${p.x} ${p.y}`;
   }, '');
 
-  const areaD = `${pathD} L ${points[points.length - 1].x} ${height} L ${points[0].x} ${height} Z`;
+  const areaD = points.length > 0
+    ? `${pathD} L ${points[points.length - 1].x} ${height} L ${points[0].x} ${height} Z`
+    : '';
 
   const defaultActions = [
     {
@@ -89,9 +102,14 @@ export const DashboardAnalyticsRow = ({
 
   const actions = quickActions || defaultActions;
 
+  // Pure SVG circumference calculation for donut
+  const radius = 38;
+  const circumference = 2 * Math.PI * radius; // ~238.76
+  let currentOffset = 0;
+
   return (
     <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 sm:gap-6">
-      {/* 1. Student Enrollment Trend Chart (5 cols) */}
+      {/* 1. Student Enrollment Trend / Weekly Attendance Average Chart (5 cols) */}
       <div className="lg:col-span-5 bg-white rounded-3xl p-5 border border-slate-200/80 shadow-xs flex flex-col justify-between">
         <div className="flex items-center justify-between pb-3 border-b border-slate-100">
           <div className="flex items-center gap-2">
@@ -102,13 +120,16 @@ export const DashboardAnalyticsRow = ({
           </div>
           <div className="relative">
             <select
-              value={trendRange}
-              onChange={(e) => setTrendRange(e.target.value)}
+              value={currentRange}
+              onChange={(e) => {
+                setInternalRange(e.target.value);
+                if (onRangeChange) onRangeChange(e.target.value);
+              }}
               className="appearance-none bg-slate-50 border border-slate-200 text-slate-700 text-xs font-semibold rounded-xl pl-3 pr-7 py-1 focus:outline-none focus:ring-1 focus:ring-emerald-500"
             >
-              <option>This Year</option>
-              <option>Past 6 Months</option>
-              <option>All Time</option>
+              {rangeOptions.map((opt) => (
+                <option key={opt} value={opt}>{opt}</option>
+              ))}
             </select>
             <ChevronDown className="w-3.5 h-3.5 text-slate-400 absolute right-2 top-2 pointer-events-none" />
           </div>
@@ -142,17 +163,19 @@ export const DashboardAnalyticsRow = ({
             })}
 
             {/* Gradient Area */}
-            <path d={areaD} fill="url(#enrollGrad)" />
+            {areaD && <path d={areaD} fill="url(#enrollGrad)" />}
 
             {/* Line */}
-            <path
-              d={pathD}
-              fill="none"
-              stroke="#10b981"
-              strokeWidth="2.5"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            />
+            {pathD && (
+              <path
+                d={pathD}
+                fill="none"
+                stroke="#10b981"
+                strokeWidth="2.5"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            )}
 
             {/* Points */}
             {points.map((p, idx) => (
@@ -180,7 +203,7 @@ export const DashboardAnalyticsRow = ({
         </div>
       </div>
 
-      {/* 2. Department-wise Distribution Donut (4 cols) */}
+      {/* 2. Department-wise / Subject Teaching Load Distribution Donut (4 cols) */}
       <div className="lg:col-span-4 bg-white rounded-3xl p-5 border border-slate-200/80 shadow-xs flex flex-col justify-between">
         <div className="flex items-center gap-2 pb-3 border-b border-slate-100">
           <div className="p-1.5 rounded-lg bg-emerald-100 text-emerald-700">
@@ -190,76 +213,30 @@ export const DashboardAnalyticsRow = ({
         </div>
 
         <div className="flex items-center justify-between gap-4 py-2">
-          {/* Donut graphic */}
+          {/* Dynamic SVG Donut graphic */}
           <div className="relative w-32 h-32 shrink-0">
             <svg viewBox="0 0 100 100" className="w-full h-full transform -rotate-90">
-              <circle cx="50" cy="50" r="38" fill="transparent" stroke="#f1f5f9" strokeWidth="14" />
-              {/* Segment 1: CSE 28% */}
-              <circle
-                cx="50"
-                cy="50"
-                r="38"
-                fill="transparent"
-                stroke="#16a34a"
-                strokeWidth="14"
-                strokeDasharray="67 172"
-                strokeDashoffset="0"
-              />
-              {/* Segment 2: ECE 18% */}
-              <circle
-                cx="50"
-                cy="50"
-                r="38"
-                fill="transparent"
-                stroke="#8b5cf6"
-                strokeWidth="14"
-                strokeDasharray="43 196"
-                strokeDashoffset="-67"
-              />
-              {/* Segment 3: EEE 12% */}
-              <circle
-                cx="50"
-                cy="50"
-                r="38"
-                fill="transparent"
-                stroke="#06b6d4"
-                strokeWidth="14"
-                strokeDasharray="29 210"
-                strokeDashoffset="-110"
-              />
-              {/* Segment 4: ME 11% */}
-              <circle
-                cx="50"
-                cy="50"
-                r="38"
-                fill="transparent"
-                stroke="#f59e0b"
-                strokeWidth="14"
-                strokeDasharray="26 213"
-                strokeDashoffset="-139"
-              />
-              {/* Segment 5: CE 10% */}
-              <circle
-                cx="50"
-                cy="50"
-                r="38"
-                fill="transparent"
-                stroke="#f97316"
-                strokeWidth="14"
-                strokeDasharray="24 215"
-                strokeDashoffset="-165"
-              />
-              {/* Segment 6: Other 21% */}
-              <circle
-                cx="50"
-                cy="50"
-                r="38"
-                fill="transparent"
-                stroke="#3b82f6"
-                strokeWidth="14"
-                strokeDasharray="50 189"
-                strokeDashoffset="-189"
-              />
+              <circle cx="50" cy="50" r={radius} fill="transparent" stroke="#f1f5f9" strokeWidth="14" />
+              {deptDistribution.map((d, idx) => {
+                const pctNum = parseFloat(d.pct) || 0;
+                const sliceLength = (pctNum / 100) * circumference;
+                const offset = currentOffset;
+                currentOffset += sliceLength;
+                return (
+                  <circle
+                    key={idx}
+                    cx="50"
+                    cy="50"
+                    r={radius}
+                    fill="transparent"
+                    stroke={d.color || '#16a34a'}
+                    strokeWidth="14"
+                    strokeDasharray={`${sliceLength} ${circumference - sliceLength}`}
+                    strokeDashoffset={-offset}
+                    className="transition-all duration-500 ease-out"
+                  />
+                );
+              })}
             </svg>
             <div className="absolute inset-0 flex flex-col items-center justify-center text-center">
               <span className="text-sm font-black text-slate-900 leading-tight">{totalCount}</span>
@@ -268,11 +245,11 @@ export const DashboardAnalyticsRow = ({
           </div>
 
           {/* Legend */}
-          <div className="grid grid-cols-2 gap-x-3 gap-y-1.5 flex-1">
+          <div className="grid grid-cols-2 gap-x-3 gap-y-1.5 flex-1 max-h-36 overflow-y-auto pr-1">
             {deptDistribution.map((d) => (
               <div key={d.name} className="flex items-center gap-1.5 text-xs">
                 <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: d.color }} />
-                <span className="font-semibold text-slate-700">{d.name}</span>
+                <span className="font-semibold text-slate-700 truncate" title={d.name}>{d.name}</span>
                 <span className="text-slate-400 text-[11px] ml-auto font-medium">{d.pct}</span>
               </div>
             ))}
@@ -314,4 +291,3 @@ export const DashboardAnalyticsRow = ({
 };
 
 export default DashboardAnalyticsRow;
-

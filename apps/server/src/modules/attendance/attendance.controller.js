@@ -1,3 +1,4 @@
+const { recordAuditLog } = require('../../utils/auditLogger');
 const Attendance = require('./attendance.model');
 const Student = require('../students/student.model');
 const Department = require('../departments/department.model');
@@ -65,7 +66,7 @@ async function markAttendanceBatch(req, res, next) {
         filter: {
           student: rec.studentId,
           subject,
-          date: new Date(date),
+          date: new Date(new Date(date).setUTCHours(0, 0, 0, 0)),
           periodNumber
         },
         update: {
@@ -80,6 +81,18 @@ async function markAttendanceBatch(req, res, next) {
     }));
 
     const result = await Attendance.bulkWrite(operations);
+
+    await recordAuditLog({
+      req,
+      action: 'ATTENDANCE_MARKED',
+      entityType: 'Attendance',
+      details: {
+        subject,
+        date,
+        periodNumber,
+        recordCount: records.length
+      }
+    });
 
     return sendSuccess(res, {
       statusCode: HTTP_STATUS.OK,

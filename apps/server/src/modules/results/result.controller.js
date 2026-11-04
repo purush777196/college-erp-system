@@ -1,3 +1,4 @@
+const { recordAuditLog } = require('../../utils/auditLogger');
 const mongoose = require('mongoose');
 const Result = require('./result.model');
 const Examination = require('../examinations/exam.model');

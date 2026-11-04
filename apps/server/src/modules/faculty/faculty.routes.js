@@ -4,7 +4,8 @@ const {
   getFacultyById,
   getMyFacultyProfile,
   createFacultyProfile,
-  updateFacultyProfile
+  updateFacultyProfile,
+  getFacultyDashboardStats
 } = require('./faculty.controller');
 const { validateFacultyInput } = require('./faculty.validator');
 const authenticate = require('../../middleware/auth');
@@ -17,6 +18,22 @@ const router = express.Router();
 router.use(authenticate);
 
 router.get('/me', authorizeRoles(ROLES.FACULTY, ROLES.HOD), getMyFacultyProfile);
+router.get(
+  '/dashboard-stats',
+  authorizeRoles(ROLES.FACULTY, ROLES.HOD, ROLES.SUPER_ADMIN, ROLES.PRINCIPAL),
+  getFacultyDashboardStats
+);
+router.get(
+  '/stats',
+  authorizeRoles(ROLES.FACULTY, ROLES.HOD, ROLES.SUPER_ADMIN, ROLES.PRINCIPAL),
+  getFacultyDashboardStats
+);
+router.get(
+  '/me/stats',
+  authorizeRoles(ROLES.FACULTY, ROLES.HOD, ROLES.SUPER_ADMIN, ROLES.PRINCIPAL),
+  getFacultyDashboardStats
+);
+
 router.get(
   '/',
   authorizeRoles(ROLES.SUPER_ADMIN, ROLES.PRINCIPAL, ROLES.HOD, ROLES.FACULTY, ROLES.STUDENT),

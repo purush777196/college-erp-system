@@ -299,6 +299,14 @@ class ApiClient {
     return this.get('/v1/faculty/me');
   }
 
+  getFacultyDashboardStats(params = {}) {
+    const searchParams = new URLSearchParams();
+    if (params.faculty) searchParams.append('faculty', params.faculty);
+    if (params.user) searchParams.append('user', params.user);
+    const qs = searchParams.toString();
+    return this.get(`/v1/faculty/dashboard-stats${qs ? `?${qs}` : ''}`);
+  }
+
   createFaculty(data) {
     return this.post('/v1/faculty', data);
   }
